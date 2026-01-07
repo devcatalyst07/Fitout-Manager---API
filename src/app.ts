@@ -5,15 +5,10 @@ import adminRoutes from './routes/admin.routes';
 
 const app = express();
 
-app.use(cors({
-  origin: '*',
-  credentials: true,
-}));
-
+app.use(cors({ origin: '*', credentials: true }));
 app.use(express.json());
 
-// Test route
-app.get('/', (req, res) => {
+app.get('/', (_, res) => {
   res.json({ message: 'Fitout Manager API is running' });
 });
 

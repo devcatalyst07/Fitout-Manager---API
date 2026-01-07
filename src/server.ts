@@ -2,25 +2,13 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import app from './app';
-import { createAdmin } from './seed/createAdmin';
 
-const PORT = process.env.PORT || 5000;
-
-const startServer = async () => {
-  try {
-    // Run seed
-    await createAdmin();
-    console.log('✅ Admin created/checked');
-
-    // Start the server
-    app.listen(PORT, () => {
-      console.log(`🚀 Server running on port ${PORT}`);
-    });
-  } catch (err) {
-    console.error('❌ Failed to start server', err);
-    process.exit(1);
-  }
-};
-
-// Start everything
-startServer();
+/**
+ * Vercel Serverless Entry Point
+ * 
+ * Do NOT use app.listen()
+ * Do NOT define PORT
+ * 
+ * Vercel will handle the server automatically
+ */
+export default app;

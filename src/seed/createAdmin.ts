@@ -3,8 +3,9 @@ import { users } from '../config/db';
 
 export const createAdmin = async () => {
   const exists = users.find(
-    u => u.email === 'superadmin@fitoutmanager.com'
+    (u) => u.email === 'superadmin@fitoutmanager.com'
   );
+
   if (exists) return;
 
   const hashedPassword = await bcrypt.hash(
@@ -20,5 +21,5 @@ export const createAdmin = async () => {
     role: 'admin',
   });
 
-  console.log('✅ Super Admin (Bryan Kaa) created');
+  console.log('✅ Super Admin seeded');
 };

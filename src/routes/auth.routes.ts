@@ -2,27 +2,23 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { users } from '../config/db';
+import { createAdmin } from '../seed/createAdmin';
 
 const router = Router();
 
 router.post('/login', async (req, res) => {
-  const { email, password, type } = req.body; // type = 'user' | 'admin'
+  await createAdmin(); // REQUIRED FOR VERCEL
 
-  const user = users.find(u => u.email === email);
+  const { email, password, type } = req.body;
+
+  const user = users.find((u) => u.email === email);
   if (!user) {
     return res.status(401).json({ message: 'Invalid credentials' });
   }
 
-  // Check if the login type matches the user role
-  if (type === 'admin' && user.role !== 'admin') {
-    return res.status(403).json({ 
-      message: 'This is not an admin account. Please use the User tab to login.' 
-    });
-  }
-
-  if (type === 'user' && user.role === 'admin') {
-    return res.status(403).json({ 
-      message: 'This is an admin account. Please use the Admin tab to login.' 
+  if (type !== user.role) {
+    return res.status(403).json({
+      message: `Please login as ${user.role}`,
     });
   }
 
@@ -31,7 +27,6 @@ router.post('/login', async (req, res) => {
     return res.status(401).json({ message: 'Invalid credentials' });
   }
 
-  // Include name in JWT payload
   const token = jwt.sign(
     {
       id: user.id,
@@ -43,7 +38,7 @@ router.post('/login', async (req, res) => {
     { expiresIn: '1d' }
   );
 
-  return res.json({
+  res.json({
     token,
     role: user.role,
     name: user.name,
