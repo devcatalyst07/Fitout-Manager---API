@@ -7,19 +7,20 @@ import { createAdmin } from './seed/createAdmin';
 const PORT = process.env.PORT || 5000;
 
 const startServer = async () => {
-  await createAdmin();
-  console.log('✅ Admin created/checked');
+  try {
+    // Run seed
+    await createAdmin();
+    console.log('✅ Admin created/checked');
+
+    // Start the server
+    app.listen(PORT, () => {
+      console.log(`🚀 Server running on port ${PORT}`);
+    });
+  } catch (err) {
+    console.error('❌ Failed to start server', err);
+    process.exit(1);
+  }
 };
 
-// Initialize admin on startup
+// Start everything
 startServer();
-
-// For Vercel, export the app
-export default app;
-
-// For local development
-if (process.env.NODE_ENV !== 'production') {
-  app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-  });
-}
