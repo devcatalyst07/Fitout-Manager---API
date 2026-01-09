@@ -1,28 +1,28 @@
 import bcrypt from 'bcryptjs';
-import { users } from '../config/db';
-
-// Global variable to persist admin creation per serverless runtime
-declare global {
-  var adminCreated: boolean | undefined;
-}
+import User from '../models/User';
 
 export const createAdmin = async () => {
-  if (!global.adminCreated) {
-    // Only create admin if not already created in this runtime
-    const hashedPassword = await bcrypt.hash(
-      'bryankaafitoutmanager',
-      10
-    );
+  try {
+    // Check if admin already exists
+    const exists = await User.findOne({ email: 'superadmin@fitoutmanager.com' });
+    
+    if (exists) {
+      console.log('✅ Super Admin already exists');
+      return;
+    }
 
-    users.push({
-      id: '1',
+    const hashedPassword = await bcrypt.hash('bryankaafitoutmanager', 10);
+
+    await User.create({
       name: 'Bryan Kaa',
       email: 'superadmin@fitoutmanager.com',
       password: hashedPassword,
       role: 'admin',
+      totalProjects: 0,
     });
 
-    global.adminCreated = true;
-    console.log('Super Admin seeded');
+    console.log('✅ Super Admin (Bryan Kaa) created');
+  } catch (error) {
+    console.error('Error creating admin:', error);
   }
 };
