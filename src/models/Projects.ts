@@ -28,17 +28,14 @@ const ProjectSchema: Schema = new Schema(
     brand: {
       type: String,
       required: true,
-      enum: ['Westfield Group', 'Scentre Group', 'Unibail-Rodamco-Westfield'],
     },
     scope: {
       type: String,
       required: true,
-      enum: ['Fitout', 'Refurbishment', 'Maintenance'],
     },
     workflow: {
       type: String,
       required: true,
-      enum: ['Standard', 'Design & Build', 'Procurement Only'],
     },
     projectCode: {
       type: String,
@@ -69,14 +66,14 @@ const ProjectSchema: Schema = new Schema(
       default: 'Planning',
     },
     userId: {
-      type: Schema.Types.ObjectId,
+      type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: true,
     },
     createdBy: {
       type: String,
       enum: ['user', 'admin'],
-      required: true,
+      default: 'user',
     },
   },
   {
