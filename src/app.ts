@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import authRoutes from './routes/auth.routes';
 import adminRoutes from './routes/admin.routes';
+import projectRoutes from './routes/project.routes';
 
 const app = express();
 
@@ -22,7 +23,8 @@ app.get('/', (_, res) => {
     status: 'online',
     endpoints: {
       auth: '/api/auth/login',
-      admin: '/api/admin/dashboard'
+      admin: '/api/admin/dashboard',
+      projects: '/api/projects'
     }
   });
 });
@@ -32,8 +34,10 @@ app.get('/health', (_, res) => {
   res.json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
+// Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/projects', projectRoutes);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
