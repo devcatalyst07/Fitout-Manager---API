@@ -28,14 +28,26 @@ const upload = multer({
   storage,
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
   fileFilter: (req, file, cb) => {
-    const allowedTypes = /pdf|doc|docx|xlsx|xls|png|jpg|jpeg/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
+    // More comprehensive MIME type checking
+    const allowedMimeTypes = [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'image/png',
+      'image/jpeg',
+      'image/jpg'
+    ];
 
-    if (extname && mimetype) {
+    const allowedExtensions = /pdf|doc|docx|xlsx|xls|png|jpg|jpeg/;
+    const extname = allowedExtensions.test(path.extname(file.originalname).toLowerCase());
+    const mimetypeAllowed = allowedMimeTypes.includes(file.mimetype);
+
+    if (extname && mimetypeAllowed) {
       cb(null, true);
     } else {
-      cb(new Error('Only documents and images are allowed'));
+      cb(new Error('Only PDF, DOC, DOCX, XLS, XLSX, PNG, JPG, JPEG files are allowed'));
     }
   },
 });
@@ -48,9 +60,12 @@ router.get('/projects', authMiddleware, adminOnly, async (req, res) => {
       .sort({ projectName: 1 });
 
     res.json(projects);
-  } catch (error) {
+  } catch (error: any) {
     console.error('Get projects error:', error);
-    res.status(500).json({ message: 'Failed to fetch projects' });
+    res.status(500).json({ 
+      message: 'Failed to fetch projects',
+      error: error.message 
+    });
   }
 });
 
@@ -73,9 +88,12 @@ router.get('/folders', authMiddleware, adminOnly, async (req, res) => {
     );
 
     res.json(foldersWithCount);
-  } catch (error) {
+  } catch (error: any) {
     console.error('Get folders error:', error);
-    res.status(500).json({ message: 'Failed to fetch document folders' });
+    res.status(500).json({ 
+      message: 'Failed to fetch document folders',
+      error: error.message 
+    });
   }
 });
 
@@ -90,15 +108,24 @@ router.get('/project/:projectId', authMiddleware, adminOnly, async (req, res) =>
       .sort({ uploadedAt: -1 });
 
     res.json(documents);
-  } catch (error) {
+  } catch (error: any) {
     console.error('Get documents error:', error);
-    res.status(500).json({ message: 'Failed to fetch documents' });
+    res.status(500).json({ 
+      message: 'Failed to fetch documents',
+      error: error.message 
+    });
   }
 });
 
 // POST upload document (Admin only)
 router.post('/upload', authMiddleware, adminOnly, upload.single('file'), async (req: AuthRequest, res) => {
   try {
+    console.log('=== UPLOAD DEBUG ===');
+    console.log('File:', req.file);
+    console.log('Body:', req.body);
+    console.log('User:', req.user);
+    console.log('===================');
+
     if (!req.file) {
       return res.status(400).json({ message: 'No file uploaded' });
     }
@@ -106,14 +133,35 @@ router.post('/upload', authMiddleware, adminOnly, upload.single('file'), async (
     const { projectId } = req.body;
 
     if (!projectId) {
+      // Clean up uploaded file
+      if (req.file && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
       return res.status(400).json({ message: 'Project ID is required' });
     }
 
     // Check if project exists
     const project = await Project.findById(projectId);
     if (!project) {
+      // Clean up uploaded file
+      if (req.file && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
       return res.status(404).json({ message: 'Project not found' });
     }
+
+    // Get user ID - check both possible properties
+    const userId = req.user?.id || req.user?.userId || req.user?._id;
+    
+    if (!userId) {
+      // Clean up uploaded file
+      if (req.file && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+      return res.status(401).json({ message: 'User authentication error' });
+    }
+
+    console.log('Creating document with userId:', userId);
 
     const newDocument = await Document.create({
       fileName: req.file.originalname,
@@ -121,20 +169,37 @@ router.post('/upload', authMiddleware, adminOnly, upload.single('file'), async (
       fileSize: req.file.size,
       fileType: req.file.mimetype,
       projectId,
-      uploadedBy: req.user.id,
+      uploadedBy: userId,
     });
 
     const populatedDocument = await Document.findById(newDocument._id)
       .populate('uploadedBy', 'name email')
       .populate('projectId', 'projectName');
 
+    console.log('Document created successfully:', populatedDocument);
+
     res.status(201).json({
       message: 'Document uploaded successfully',
       document: populatedDocument,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Upload document error:', error);
-    res.status(500).json({ message: 'Failed to upload document' });
+    console.error('Error stack:', error.stack);
+    
+    // Clean up uploaded file on error
+    if (req.file && fs.existsSync(req.file.path)) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (unlinkError) {
+        console.error('Failed to delete uploaded file:', unlinkError);
+      }
+    }
+    
+    res.status(500).json({ 
+      message: 'Failed to upload document',
+      error: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 
@@ -158,9 +223,12 @@ router.delete('/:id', authMiddleware, adminOnly, async (req, res) => {
     await Document.findByIdAndDelete(id);
 
     res.json({ message: 'Document deleted successfully' });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Delete document error:', error);
-    res.status(500).json({ message: 'Failed to delete document' });
+    res.status(500).json({ 
+      message: 'Failed to delete document',
+      error: error.message 
+    });
   }
 });
 
@@ -178,9 +246,12 @@ router.get('/stats/overview', authMiddleware, adminOnly, async (req, res) => {
       totalProjects,
       totalSize,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Get stats error:', error);
-    res.status(500).json({ message: 'Failed to fetch statistics' });
+    res.status(500).json({ 
+      message: 'Failed to fetch statistics',
+      error: error.message 
+    });
   }
 });
 
