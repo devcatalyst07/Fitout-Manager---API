@@ -19,18 +19,19 @@ cloudinary.config({
 // Configure Cloudinary storage for multer
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
-  params: {
-    folder: 'fitout-documents',
-    resource_type: 'raw', // For documents (PDFs, DOC, etc.)
-    access_mode: 'public', // Make files publicly accessible
-    format: async (req: any, file: any) => {
-      const ext = file.originalname.split('.').pop();
-      return ext;
-    },
-    public_id: (req: any, file: any) => {
-      return `${Date.now()}-${file.originalname.replace(/\.[^/.]+$/, '')}`;
-    },
-  } as any,
+  params: async (req: any, file: any) => {
+    // Determine resource type based on file
+    const isPDF = file.mimetype === 'application/pdf';
+    const isImage = file.mimetype.startsWith('image/');
+    
+    return {
+      folder: 'fitout-documents',
+      resource_type: isPDF || !isImage ? 'raw' : 'auto', // Use 'raw' for PDFs and documents
+      access_mode: 'public',
+      format: file.originalname.split('.').pop(),
+      public_id: `${Date.now()}-${file.originalname.replace(/\.[^/.]+$/, '')}`,
+    };
+  },
 });
 
 const upload = multer({
