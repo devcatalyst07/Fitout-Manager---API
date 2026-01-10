@@ -4,40 +4,38 @@ import { adminOnly } from '../middleware/role';
 import Document from '../models/Document';
 import Project from '../models/Projects';
 import multer from 'multer';
-import path from 'path';
-import fs from 'fs';
+import { v2 as cloudinary } from 'cloudinary';
+import { CloudinaryStorage } from 'multer-storage-cloudinary';
 
 const router = Router();
 
-// TEST ENDPOINT - Remove after debugging
-router.post('/test-upload', authMiddleware, adminOnly, (req: AuthRequest, res) => {
-  console.log('=== TEST ENDPOINT HIT ===');
-  console.log('Headers:', req.headers);
-  console.log('Body:', req.body);
-  console.log('User:', req.user);
-  res.json({ message: 'Test endpoint working', user: req.user });
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = 'uploads/documents';
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
-  },
+// Configure Cloudinary storage for multer
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: 'fitout-documents',
+    resource_type: 'auto',
+    format: async (req: any, file: any) => {
+      const ext = file.originalname.split('.').pop();
+      return ext;
+    },
+    public_id: (req: any, file: any) => {
+      return `${Date.now()}-${file.originalname.replace(/\.[^/.]+$/, '')}`;
+    },
+  } as any, // Type assertion to bypass strict typing
 });
 
 const upload = multer({
   storage,
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
   fileFilter: (req, file, cb) => {
-    // More comprehensive MIME type checking
     const allowedMimeTypes = [
       'application/pdf',
       'application/msword',
@@ -49,11 +47,7 @@ const upload = multer({
       'image/jpg'
     ];
 
-    const allowedExtensions = /pdf|doc|docx|xlsx|xls|png|jpg|jpeg/;
-    const extname = allowedExtensions.test(path.extname(file.originalname).toLowerCase());
-    const mimetypeAllowed = allowedMimeTypes.includes(file.mimetype);
-
-    if (extname && mimetypeAllowed) {
+    if (allowedMimeTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
       cb(new Error('Only PDF, DOC, DOCX, XLS, XLSX, PNG, JPG, JPEG files are allowed'));
@@ -127,11 +121,11 @@ router.get('/project/:projectId', authMiddleware, adminOnly, async (req, res) =>
 });
 
 // POST upload document (Admin only)
-router.post('/upload', authMiddleware, adminOnly, (req: AuthRequest, res, next) => {
+router.post('/upload', authMiddleware, adminOnly, (req: AuthRequest, res) => {
   // Wrap multer upload in error handler
   upload.single('file')(req, res, async (err) => {
     if (err) {
-      console.error('Multer error:', err);
+      console.error('Multer/Cloudinary error:', err);
       return res.status(400).json({ 
         message: err.message || 'File upload error',
         error: err.toString()
@@ -145,81 +139,85 @@ router.post('/upload', authMiddleware, adminOnly, (req: AuthRequest, res, next) 
       console.log('User:', req.user);
       console.log('===================');
 
-    if (!req.file) {
-      return res.status(400).json({ message: 'No file uploaded' });
-    }
-
-    const { projectId } = req.body;
-
-    if (!projectId) {
-      // Clean up uploaded file
-      if (req.file && fs.existsSync(req.file.path)) {
-        fs.unlinkSync(req.file.path);
+      if (!req.file) {
+        return res.status(400).json({ message: 'No file uploaded' });
       }
-      return res.status(400).json({ message: 'Project ID is required' });
-    }
 
-    // Check if project exists
-    const project = await Project.findById(projectId);
-    if (!project) {
-      // Clean up uploaded file
-      if (req.file && fs.existsSync(req.file.path)) {
-        fs.unlinkSync(req.file.path);
+      const { projectId } = req.body;
+
+      if (!projectId) {
+        // Delete from Cloudinary if project ID is missing
+        if ((req.file as any).filename) {
+          await cloudinary.uploader.destroy((req.file as any).filename);
+        }
+        return res.status(400).json({ message: 'Project ID is required' });
       }
-      return res.status(404).json({ message: 'Project not found' });
-    }
 
-    // Get user ID - check both possible properties
-    const userId = req.user?.id || req.user?.userId || req.user?._id;
-    
-    if (!userId) {
-      // Clean up uploaded file
-      if (req.file && fs.existsSync(req.file.path)) {
-        fs.unlinkSync(req.file.path);
+      // Check if project exists
+      const project = await Project.findById(projectId);
+      if (!project) {
+        // Delete from Cloudinary if project doesn't exist
+        if ((req.file as any).filename) {
+          await cloudinary.uploader.destroy((req.file as any).filename);
+        }
+        return res.status(404).json({ message: 'Project not found' });
       }
-      return res.status(401).json({ message: 'User authentication error' });
-    }
 
-    console.log('Creating document with userId:', userId);
-
-    const newDocument = await Document.create({
-      fileName: req.file.originalname,
-      fileUrl: `/uploads/documents/${req.file.filename}`,
-      fileSize: req.file.size,
-      fileType: req.file.mimetype,
-      projectId,
-      uploadedBy: userId,
-    });
-
-    const populatedDocument = await Document.findById(newDocument._id)
-      .populate('uploadedBy', 'name email')
-      .populate('projectId', 'projectName');
-
-    console.log('Document created successfully:', populatedDocument);
-
-    res.status(201).json({
-      message: 'Document uploaded successfully',
-      document: populatedDocument,
-    });
-  } catch (error: any) {
-    console.error('Upload document error:', error);
-    console.error('Error stack:', error.stack);
-    
-    // Clean up uploaded file on error
-    if (req.file && fs.existsSync(req.file.path)) {
-      try {
-        fs.unlinkSync(req.file.path);
-      } catch (unlinkError) {
-        console.error('Failed to delete uploaded file:', unlinkError);
+      // Get user ID - check both possible properties
+      const userId = req.user?.id || req.user?.userId || req.user?._id;
+      
+      if (!userId) {
+        // Delete from Cloudinary if user auth fails
+        if ((req.file as any).filename) {
+          await cloudinary.uploader.destroy((req.file as any).filename);
+        }
+        return res.status(401).json({ message: 'User authentication error' });
       }
+
+      console.log('Creating document with userId:', userId);
+
+      // Cloudinary file info
+      const cloudinaryFile = req.file as any;
+
+      const newDocument = await Document.create({
+        fileName: req.file.originalname,
+        fileUrl: cloudinaryFile.path, // Cloudinary URL
+        fileSize: cloudinaryFile.size,
+        fileType: cloudinaryFile.mimetype,
+        projectId,
+        uploadedBy: userId,
+        cloudinaryPublicId: cloudinaryFile.filename, // Store for deletion later
+      });
+
+      const populatedDocument = await Document.findById(newDocument._id)
+        .populate('uploadedBy', 'name email')
+        .populate('projectId', 'projectName');
+
+      console.log('Document created successfully:', populatedDocument);
+
+      res.status(201).json({
+        message: 'Document uploaded successfully',
+        document: populatedDocument,
+      });
+    } catch (error: any) {
+      console.error('Upload document error:', error);
+      console.error('Error stack:', error.stack);
+      
+      // Clean up Cloudinary upload on error
+      if (req.file && (req.file as any).filename) {
+        try {
+          await cloudinary.uploader.destroy((req.file as any).filename);
+        } catch (deleteError) {
+          console.error('Failed to delete from Cloudinary:', deleteError);
+        }
+      }
+      
+      res.status(500).json({ 
+        message: 'Failed to upload document',
+        error: error.message,
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      });
     }
-    
-    res.status(500).json({ 
-      message: 'Failed to upload document',
-      error: error.message,
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
-  }
   });
 });
 
@@ -234,10 +232,16 @@ router.delete('/:id', authMiddleware, adminOnly, async (req, res) => {
       return res.status(404).json({ message: 'Document not found' });
     }
 
-    // Delete file from filesystem
-    const filePath = path.join(__dirname, '..', document.fileUrl);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
+    // Delete from Cloudinary using public_id
+    if (document.cloudinaryPublicId) {
+      try {
+        await cloudinary.uploader.destroy(document.cloudinaryPublicId, {
+          resource_type: 'raw' // Use 'raw' for non-image files
+        });
+      } catch (cloudinaryError) {
+        console.error('Cloudinary deletion error:', cloudinaryError);
+        // Continue with database deletion even if Cloudinary fails
+      }
     }
 
     await Document.findByIdAndDelete(id);

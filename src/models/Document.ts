@@ -1,3 +1,4 @@
+// In your models/Document.ts file
 import mongoose, { Schema, Document as MongoDocument } from 'mongoose';
 
 export interface IDocument extends MongoDocument {
@@ -8,6 +9,7 @@ export interface IDocument extends MongoDocument {
   projectId: mongoose.Types.ObjectId;
   uploadedBy: mongoose.Types.ObjectId;
   uploadedAt: Date;
+  cloudinaryPublicId?: string; // ADD THIS LINE
 }
 
 const DocumentSchema: Schema = new Schema(
@@ -37,6 +39,10 @@ const DocumentSchema: Schema = new Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: true,
+    },
+    cloudinaryPublicId: { 
+      type: String,
+      required: false,
     },
     uploadedAt: {
       type: Date,
