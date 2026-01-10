@@ -1,20 +1,25 @@
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
 import authRoutes from './routes/auth.routes';
 import adminRoutes from './routes/admin.routes';
 import projectRoutes from './routes/project.routes';
+import documentRoutes from './routes/document.routes'; // NEW
 
 const app = express();
 
 // Enhanced CORS configuration
 app.use(cors({
-  origin: '*', // Allow all origins for testing - restrict in production
+  origin: '*',
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 app.use(express.json());
+
+// Serve static files for uploads - NEW
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Root endpoint with more details
 app.get('/', (_, res) => {
@@ -24,7 +29,8 @@ app.get('/', (_, res) => {
     endpoints: {
       auth: '/api/auth/login',
       admin: '/api/admin/dashboard',
-      projects: '/api/projects'
+      projects: '/api/projects',
+      documents: '/api/documents' // NEW
     }
   });
 });
@@ -38,6 +44,7 @@ app.get('/health', (_, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/projects', projectRoutes);
+app.use('/api/documents', documentRoutes); // NEW
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

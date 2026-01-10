@@ -20,6 +20,23 @@ router.get('/', authMiddleware, adminOnly, async (req, res) => {
   }
 });
 
+// GET single project by ID (Admin only) - NEW
+router.get('/:id', authMiddleware, adminOnly, async (req, res) => {
+  try {
+    const project = await Project.findById(req.params.id)
+      .populate('userId', 'name email');
+    
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+    
+    res.json(project);
+  } catch (error) {
+    console.error('Get project error:', error);
+    res.status(500).json({ message: 'Failed to fetch project' });
+  }
+});
+
 // GET project statistics (Admin only)
 router.get('/stats', authMiddleware, adminOnly, async (req, res) => {
   try {
