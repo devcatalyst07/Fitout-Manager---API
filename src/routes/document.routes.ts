@@ -9,6 +9,15 @@ import fs from 'fs';
 
 const router = Router();
 
+// TEST ENDPOINT - Remove after debugging
+router.post('/test-upload', authMiddleware, adminOnly, (req: AuthRequest, res) => {
+  console.log('=== TEST ENDPOINT HIT ===');
+  console.log('Headers:', req.headers);
+  console.log('Body:', req.body);
+  console.log('User:', req.user);
+  res.json({ message: 'Test endpoint working', user: req.user });
+});
+
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -118,13 +127,23 @@ router.get('/project/:projectId', authMiddleware, adminOnly, async (req, res) =>
 });
 
 // POST upload document (Admin only)
-router.post('/upload', authMiddleware, adminOnly, upload.single('file'), async (req: AuthRequest, res) => {
-  try {
-    console.log('=== UPLOAD DEBUG ===');
-    console.log('File:', req.file);
-    console.log('Body:', req.body);
-    console.log('User:', req.user);
-    console.log('===================');
+router.post('/upload', authMiddleware, adminOnly, (req: AuthRequest, res, next) => {
+  // Wrap multer upload in error handler
+  upload.single('file')(req, res, async (err) => {
+    if (err) {
+      console.error('Multer error:', err);
+      return res.status(400).json({ 
+        message: err.message || 'File upload error',
+        error: err.toString()
+      });
+    }
+
+    try {
+      console.log('=== UPLOAD DEBUG ===');
+      console.log('File:', req.file);
+      console.log('Body:', req.body);
+      console.log('User:', req.user);
+      console.log('===================');
 
     if (!req.file) {
       return res.status(400).json({ message: 'No file uploaded' });
@@ -201,6 +220,7 @@ router.post('/upload', authMiddleware, adminOnly, upload.single('file'), async (
       details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
+  });
 });
 
 // DELETE document (Admin only)
