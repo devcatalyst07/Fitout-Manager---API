@@ -21,7 +21,8 @@ const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
     folder: 'fitout-documents',
-    resource_type: 'raw', // Changed from 'auto' to 'raw' for documents
+    resource_type: 'raw', // For documents (PDFs, DOC, etc.)
+    access_mode: 'public', // Make files publicly accessible
     format: async (req: any, file: any) => {
       const ext = file.originalname.split('.').pop();
       return ext;
@@ -29,7 +30,7 @@ const storage = new CloudinaryStorage({
     public_id: (req: any, file: any) => {
       return `${Date.now()}-${file.originalname.replace(/\.[^/.]+$/, '')}`;
     },
-  } as any, // Type assertion to bypass strict typing
+  } as any,
 });
 
 const upload = multer({
