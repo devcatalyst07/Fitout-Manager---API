@@ -19,18 +19,19 @@ cloudinary.config({
 // Configure Cloudinary storage for multer
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
-  params: async (req: any, file: any) => {
-    // Check if file is an image
-    const isImage = file.mimetype.startsWith('image/');
-    
-    return {
-      folder: 'fitout-documents',
-      resource_type: isImage ? 'image' : 'raw',
-      access_mode: 'public',
-      public_id: `${Date.now()}-${file.originalname.replace(/\.[^/.]+$/, '')}`,
-    };
-  },
-} as any);
+  params: {
+    folder: 'fitout-documents',
+    resource_type: 'raw', // For documents (PDFs, DOC, etc.)
+    access_mode: 'public', // Make files publicly accessible
+    format: async (req: any, file: any) => {
+      const ext = file.originalname.split('.').pop();
+      return ext;
+    },
+    public_id: (req: any, file: any) => {
+      return `${Date.now()}-${file.originalname.replace(/\.[^/.]+$/, '')}`;
+    },
+  } as any,
+});
 
 const upload = multer({
   storage,
@@ -178,17 +179,10 @@ router.post('/upload', authMiddleware, adminOnly, (req: AuthRequest, res) => {
 
       // Cloudinary file info
       const cloudinaryFile = req.file as any;
-      
-      // For PDFs, generate a URL that displays inline instead of downloading
-      let fileUrl = cloudinaryFile.path;
-      if (req.file.mimetype === 'application/pdf') {
-        // Replace /raw/upload/ with /image/upload/fl_attachment:inline/
-        fileUrl = cloudinaryFile.path.replace('/raw/upload/', '/image/upload/fl_attachment:inline/');
-      }
 
       const newDocument = await Document.create({
         fileName: req.file.originalname,
-        fileUrl: fileUrl, // Use modified URL for PDFs
+        fileUrl: cloudinaryFile.path, // Cloudinary URL
         fileSize: cloudinaryFile.size,
         fileType: cloudinaryFile.mimetype,
         projectId,
