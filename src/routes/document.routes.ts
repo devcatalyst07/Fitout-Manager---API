@@ -21,7 +21,7 @@ const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
     folder: 'fitout-documents',
-    resource_type: 'auto',
+    resource_type: 'raw', // Changed from 'auto' to 'raw' for documents
     format: async (req: any, file: any) => {
       const ext = file.originalname.split('.').pop();
       return ext;
