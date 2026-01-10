@@ -179,10 +179,17 @@ router.post('/upload', authMiddleware, adminOnly, (req: AuthRequest, res) => {
 
       // Cloudinary file info
       const cloudinaryFile = req.file as any;
+      
+      // For PDFs, generate a URL that displays inline instead of downloading
+      let fileUrl = cloudinaryFile.path;
+      if (req.file.mimetype === 'application/pdf') {
+        // Replace /raw/upload/ with /image/upload/fl_attachment:inline/
+        fileUrl = cloudinaryFile.path.replace('/raw/upload/', '/image/upload/fl_attachment:inline/');
+      }
 
       const newDocument = await Document.create({
         fileName: req.file.originalname,
-        fileUrl: cloudinaryFile.path, // Cloudinary URL
+        fileUrl: fileUrl, // Use modified URL for PDFs
         fileSize: cloudinaryFile.size,
         fileType: cloudinaryFile.mimetype,
         projectId,
