@@ -4,7 +4,10 @@ import path from 'path';
 import authRoutes from './routes/auth.routes';
 import adminRoutes from './routes/admin.routes';
 import projectRoutes from './routes/project.routes';
-import documentRoutes from './routes/document.routes'; // NEW
+import documentRoutes from './routes/document.routes';
+import taskRoutes from './routes/task.routes'; // NEW
+import budgetRoutes from './routes/budget.routes'; // NEW
+import teamRoutes from './routes/team.routes'; // NEW
 
 const app = express();
 
@@ -18,7 +21,7 @@ app.use(cors({
 
 app.use(express.json());
 
-// Serve static files for uploads - NEW
+// Serve static files for uploads
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Root endpoint with more details
@@ -30,7 +33,10 @@ app.get('/', (_, res) => {
       auth: '/api/auth/login',
       admin: '/api/admin/dashboard',
       projects: '/api/projects',
-      documents: '/api/documents' // NEW
+      documents: '/api/documents',
+      tasks: '/api/projects/:projectId/tasks', // NEW
+      budget: '/api/projects/:projectId/budget', // NEW
+      team: '/api/projects/:projectId/team' // NEW
     }
   });
 });
@@ -44,7 +50,10 @@ app.get('/health', (_, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/projects', projectRoutes);
-app.use('/api/documents', documentRoutes); // NEW
+app.use('/api/projects', taskRoutes); 
+app.use('/api/projects', budgetRoutes); 
+app.use('/api/projects', teamRoutes); 
+app.use('/api/documents', documentRoutes);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
