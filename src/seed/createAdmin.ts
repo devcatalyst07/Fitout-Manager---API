@@ -7,7 +7,7 @@ export const createAdmin = async () => {
     const exists = await User.findOne({ email: 'superadmin@fitoutmanager.com' });
     
     if (exists) {
-      console.log('✅ Super Admin already exists');
+      console.log('Super Admin already exists');
       return;
     }
 
@@ -21,7 +21,7 @@ export const createAdmin = async () => {
       totalProjects: 0,
     });
 
-    console.log('✅ Super Admin (Bryan Kaa) created');
+    console.log('Super Admin (Bryan Kaa) created');
   } catch (error) {
     console.error('Error creating admin:', error);
   }

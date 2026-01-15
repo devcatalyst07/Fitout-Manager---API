@@ -34,9 +34,9 @@ app.get('/', (_, res) => {
       admin: '/api/admin/dashboard',
       projects: '/api/projects',
       documents: '/api/documents',
-      tasks: '/api/projects/:projectId/tasks', // NEW
-      budget: '/api/projects/:projectId/budget', // NEW
-      team: '/api/projects/:projectId/team' // NEW
+      tasks: '/api/projects/:projectId/tasks', 
+      budget: '/api/projects/:projectId/budget', 
+      team: '/api/projects/:projectId/team' 
     }
   });
 });
