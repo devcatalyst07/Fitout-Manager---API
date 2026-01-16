@@ -82,8 +82,7 @@ router.post('/:projectId/tasks', authMiddleware, adminOnly, async (req: AuthRequ
       description,
       status,
       priority,
-      assigneeEmail,
-      assigneeName,
+      assignees, // array of assignees to
       startDate,
       dueDate,
       progress,
@@ -91,8 +90,23 @@ router.post('/:projectId/tasks', authMiddleware, adminOnly, async (req: AuthRequ
     } = req.body;
 
     // Validate required fields
-    if (!title || !assigneeEmail || !assigneeName) {
-      return res.status(400).json({ message: 'Title, assignee email, and assignee name are required' });
+    if (
+      !title ||
+      !assignees ||
+      !Array.isArray(assignees) ||
+      assignees.length === 0
+    ) {
+      return res
+        .status(400)
+        .json({ message: "Title and at least one assignee are required" });
+    }
+
+    // Validate each assignee has email and name
+    const invalidAssignee = assignees.find((a: any) => !a.email || !a.name);
+    if (invalidAssignee) {
+      return res
+        .status(400)
+        .json({ message: "Each assignee must have email and name" });
     }
 
     // Verify project exists
@@ -106,8 +120,7 @@ router.post('/:projectId/tasks', authMiddleware, adminOnly, async (req: AuthRequ
       description,
       status: status || 'Backlog',
       priority: priority || 'Medium',
-      assigneeEmail,
-      assigneeName,
+      assignees, // NEW: array
       startDate,
       dueDate,
       progress: progress || 0,
