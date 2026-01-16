@@ -1,12 +1,16 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
+export interface IAssignee {
+  email: string;
+  name: string;
+}
+
 export interface ITask extends Document {
   title: string;
   description?: string;
-  status: 'Backlog' | 'In Progress' | 'Blocked' | 'Done';
-  priority: 'Low' | 'Medium' | 'High' | 'Critical';
-  assigneeEmail: string;
-  assigneeName: string;
+  status: "Backlog" | "In Progress" | "Blocked" | "Done";
+  priority: "Low" | "Medium" | "High" | "Critical";
+  assignees: IAssignee[];
   startDate?: Date;
   dueDate?: Date;
   progress: number;
@@ -28,22 +32,34 @@ const TaskSchema: Schema = new Schema(
     },
     status: {
       type: String,
-      enum: ['Backlog', 'In Progress', 'Blocked', 'Done'],
-      default: 'Backlog',
+      enum: ["Backlog", "In Progress", "Blocked", "Done"],
+      default: "Backlog",
     },
     priority: {
       type: String,
-      enum: ['Low', 'Medium', 'High', 'Critical'],
-      default: 'Medium',
+      enum: ["Low", "Medium", "High", "Critical"],
+      default: "Medium",
     },
-    assigneeEmail: {
-      type: String,
-      required: true,
-    },
-    assigneeName: {
-      type: String,
-      required: true,
-    },
+    // assigneeEmail: {
+    //   type: String,
+    //   required: true,
+    // },
+    // assigneeName: {
+    //   type: String,
+    //   required: true,
+    // },
+    assignees: [
+      {
+        email: {
+          type: String,
+          required: true,
+        },
+        name: {
+          type: String,
+          required: true,
+        },
+      },
+    ],
     startDate: {
       type: Date,
     },
@@ -61,12 +77,12 @@ const TaskSchema: Schema = new Schema(
     },
     projectId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Project',
+      ref: "Project",
       required: true,
     },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
     },
   },
