@@ -3,6 +3,7 @@ import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { adminOnly } from '../middleware/role';
 import Task from '../models/Task';
 import Project from '../models/Projects';
+import ActivityLog from '../models/ActivityLog';
 
 const router = Router();
 
@@ -86,7 +87,7 @@ router.post('/:projectId/tasks', authMiddleware, adminOnly, async (req: AuthRequ
       startDate,
       dueDate,
       progress,
-      estimateHours
+      estimateHours,
     } = req.body;
 
     // Validate required fields
@@ -112,14 +113,14 @@ router.post('/:projectId/tasks', authMiddleware, adminOnly, async (req: AuthRequ
     // Verify project exists
     const project = await Project.findById(projectId);
     if (!project) {
-      return res.status(404).json({ message: 'Project not found' });
+      return res.status(404).json({ message: "Project not found" });
     }
 
     const newTask = await Task.create({
       title,
       description,
-      status: status || 'Backlog',
-      priority: priority || 'Medium',
+      status: status || "Backlog",
+      priority: priority || "Medium",
       assignees, // NEW: array
       startDate,
       dueDate,
@@ -130,11 +131,21 @@ router.post('/:projectId/tasks', authMiddleware, adminOnly, async (req: AuthRequ
     });
 
     const populatedTask = await Task.findById(newTask._id)
-      .populate('createdBy', 'name email')
-      .populate('projectId', 'projectName');
+      .populate("createdBy", "name email")
+      .populate("projectId", "projectName");
+
+    // para mag Log ng activity
+    await ActivityLog.create({
+      taskId: newTask._id,
+      userId: req.user.id,
+      userName: req.user.name || "Unknown",
+      userEmail: req.user.email,
+      action: "created",
+      description: `${req.user.name || "User"} created task "${title}"`,
+    });
 
     res.status(201).json({
-      message: 'Task created successfully',
+      message: "Task created successfully",
       task: populatedTask,
     });
   } catch (error: any) {
@@ -144,11 +155,18 @@ router.post('/:projectId/tasks', authMiddleware, adminOnly, async (req: AuthRequ
 });
 
 // UPDATE task (Admin only)
-router.put('/:projectId/tasks/:taskId', authMiddleware, adminOnly, async (req, res) => {
+router.put('/:projectId/tasks/:taskId', authMiddleware, adminOnly, async (req: AuthRequest, res) => {
   try {
     const { taskId } = req.params;
     const updateData = req.body;
 
+    // GET old task data for comparison
+    const oldTask = await Task.findById(taskId);
+    if (!oldTask) {
+      return res.status(404).json({ message: 'Task not found' });
+    }
+
+    // Update task
     const updatedTask = await Task.findByIdAndUpdate(
       taskId,
       updateData,
@@ -159,6 +177,90 @@ router.put('/:projectId/tasks/:taskId', authMiddleware, adminOnly, async (req, r
 
     if (!updatedTask) {
       return res.status(404).json({ message: 'Task not found' });
+    }
+
+    // Log status changes
+    if (oldTask.status !== updatedTask.status) {
+      await ActivityLog.create({
+        taskId,
+        userId: req.user.id,
+        userName: req.user.name,
+        userEmail: req.user.email,
+        action: 'status_changed',
+        field: 'status',
+        oldValue: oldTask.status,
+        newValue: updatedTask.status,
+        description: `${req.user.name} changed status from "${oldTask.status}" to "${updatedTask.status}"`,
+      });
+    }
+
+    // Log priority changes
+    if (oldTask.priority !== updatedTask.priority) {
+      await ActivityLog.create({
+        taskId,
+        userId: req.user.id,
+        userName: req.user.name,
+        userEmail: req.user.email,
+        action: 'priority_changed',
+        field: 'priority',
+        oldValue: oldTask.priority,
+        newValue: updatedTask.priority,
+        description: `${req.user.name} changed priority from "${oldTask.priority}" to "${updatedTask.priority}"`,
+      });
+    }
+
+    // Log progress changes
+    if (oldTask.progress !== updatedTask.progress) {
+      await ActivityLog.create({
+        taskId,
+        userId: req.user.id,
+        userName: req.user.name,
+        userEmail: req.user.email,
+        action: 'progress_updated',
+        field: 'progress',
+        oldValue: String(oldTask.progress),
+        newValue: String(updatedTask.progress),
+        description: `${req.user.name} updated progress from ${oldTask.progress}% to ${updatedTask.progress}%`,
+      });
+    }
+
+    // Log assignee changes
+    const oldAssigneeEmails = oldTask.assignees.map((a) => a.email).sort();
+    const newAssigneeEmails = updatedTask.assignees.map((a) => a.email).sort();
+
+    if (JSON.stringify(oldAssigneeEmails) !== JSON.stringify(newAssigneeEmails)) {
+      const added = newAssigneeEmails.filter((email) => !oldAssigneeEmails.includes(email));
+      const removed = oldAssigneeEmails.filter((email) => !newAssigneeEmails.includes(email));
+
+      if (added.length > 0) {
+        const addedNames = updatedTask.assignees
+          .filter((a) => added.includes(a.email))
+          .map((a) => a.name)
+          .join(', ');
+        await ActivityLog.create({
+          taskId,
+          userId: req.user.id,
+          userName: req.user.name,
+          userEmail: req.user.email,
+          action: 'assigned',
+          description: `${req.user.name} assigned ${addedNames} to the task`,
+        });
+      }
+
+      if (removed.length > 0) {
+        const removedNames = oldTask.assignees
+          .filter((a) => removed.includes(a.email))
+          .map((a) => a.name)
+          .join(', ');
+        await ActivityLog.create({
+          taskId,
+          userId: req.user.id,
+          userName: req.user.name,
+          userEmail: req.user.email,
+          action: 'unassigned',
+          description: `${req.user.name} removed ${removedNames} from the task`,
+        });
+      }
     }
 
     res.json({
