@@ -5,7 +5,7 @@ export interface IBudgetItem extends Document {
   vendor: string;
   quantity: number;
   unitCost: number;
-  committedStatus: 'Normal' | 'Approved' | 'Submitted';
+  committedStatus: 'Paid' | 'Invoiced' | 'Committed' | 'Planned';
   category: string;
   projectId: mongoose.Types.ObjectId;
   createdBy: mongoose.Types.ObjectId;
@@ -35,8 +35,8 @@ const BudgetItemSchema: Schema = new Schema(
     },
     committedStatus: {
       type: String,
-      enum: ['Normal', 'Approved', 'Submitted'],
-      default: 'Normal',
+      enum: ['Paid', 'Invoiced', 'Committed', 'Planned'],
+      default: 'Planned',
     },
     category: {
       type: String,
