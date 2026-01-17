@@ -11,6 +11,7 @@ import teamRoutes from './routes/team.routes'; // NEW
 import commentRoutes from "./routes/comment.routes";
 import activityLogRoutes from "./routes/activityLog.routes";
 import uploadRoutes from "./routes/upload.routes"; 
+import overviewRoutes from "./routes/overview.routes";
 
 const app = express();
 
@@ -55,7 +56,8 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/projects', taskRoutes); 
 app.use('/api/projects', budgetRoutes); 
-app.use('/api/projects', teamRoutes); 
+app.use('/api/projects', teamRoutes);
+app.use("/api/projects", overviewRoutes); // for project overview
 app.use('/api/documents', documentRoutes);
 app.use("/api/tasks", commentRoutes);
 app.use("/api/tasks", activityLogRoutes);
