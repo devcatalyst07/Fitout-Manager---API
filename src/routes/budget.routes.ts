@@ -3,6 +3,7 @@ import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { adminOnly } from '../middleware/role';
 import BudgetItem from '../models/BudgetItem';
 import Project from '../models/Projects';
+import Approval from "../models/Approval";
 
 const router = Router();
 
@@ -177,7 +178,7 @@ router.post('/:projectId/budget', authMiddleware, adminOnly, async (req: AuthReq
       .populate('createdBy', 'name email');
 
     res.status(201).json({
-      message: 'Budget item created successfully',
+      message: 'Budget item created successfully and sent for approval',
       budgetItem: populatedItem,
     });
   } catch (error: any) {
