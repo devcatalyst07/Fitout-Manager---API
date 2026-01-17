@@ -3,6 +3,7 @@ import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { adminOnly } from '../middleware/role';
 import BudgetItem from '../models/BudgetItem';
 import Project from '../models/Projects';
+import Approval from "../models/Approval";
 
 const router = Router();
 
@@ -124,6 +125,21 @@ router.post('/:projectId/budget', authMiddleware, adminOnly, async (req: AuthReq
       createdBy: req.user.id,
     });
 
+    // Create approval request for budget item
+    await Approval.create({
+      projectId,
+      itemType: 'BudgetItem',
+      itemId: newBudgetItem._id,
+      itemDescription: `Budget: ${description}`,
+      requestedBy: req.user.id,
+      status: 'Pending',
+      metadata: {
+        amount: quantity * unitCost,
+        category,
+        vendor,
+      }
+    });
+
     // Update project spent amount
     const totalSpent = await BudgetItem.aggregate([
       { $match: { projectId: project._id } },
@@ -139,7 +155,7 @@ router.post('/:projectId/budget', authMiddleware, adminOnly, async (req: AuthReq
       .populate('createdBy', 'name email');
 
     res.status(201).json({
-      message: 'Budget item created successfully',
+      message: 'Budget item created successfully and sent for approval',
       budgetItem: populatedItem,
     });
   } catch (error: any) {
