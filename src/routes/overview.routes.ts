@@ -3,6 +3,7 @@ import { authMiddleware, AuthRequest } from "../middleware/auth";
 import Task from "../models/Task";
 import ActivityLog from "../models/ActivityLog";
 import Project from "../models/Projects";
+import Approval from "../models/Approval";
 
 const router = Router();
 
@@ -200,15 +201,21 @@ router.get(
       const variancePercent =
         project.budget > 0 ? Math.abs((variance / project.budget) * 100) : 0;
 
-        // naka round na ito to 1 decimal place
-        // to be followed yung open approval check ko muna kung tama yung calculation sa budget
+      // Get REAL pending approvals count ← NEW
+      const openApprovals = await Approval.countDocuments({
+        projectId,
+        status: "Pending",
+      });
+
+      // naka round na ito to 1 decimal place
+      // to be followed yung open approval check ko muna kung tama yung calculation sa budget
       const stats = {
-        budgetUtilization: Math.round(budgetUtilization * 10) / 10, 
+        budgetUtilization: Math.round(budgetUtilization * 10) / 10,
         variance: Math.round(variancePercent * 10) / 10,
         tasksCompleted: Math.round(tasksCompletedPercent * 10) / 10,
         totalTasks,
         completedTasks,
-        openApprovals: 0, // ito to be followed muna
+        openApprovals, 
       };
 
       res.json(stats);
