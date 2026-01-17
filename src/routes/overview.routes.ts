@@ -2,6 +2,7 @@ import { Router } from "express";
 import { authMiddleware, AuthRequest } from "../middleware/auth";
 import Task from "../models/Task";
 import ActivityLog from "../models/ActivityLog";
+import Project from "../models/Projects";
 
 const router = Router();
 
@@ -177,21 +178,37 @@ router.get(
     try {
       const { projectId } = req.params;
 
-      // Fetch tasks
+      // Fetch project for budget info
+      const project = await Project.findById(projectId);
+      if (!project) {
+        return res.status(404).json({ message: "Project not found" });
+      }
+
+      // Fetch all tasks for the project
       const tasks = await Task.find({ projectId });
       const totalTasks = tasks.length;
       const completedTasks = tasks.filter((t) => t.status === "Done").length;
       const tasksCompletedPercent =
         totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
 
-      // need pa i-fetch yung budget data dito sa budget API para ma-calculate
+      // Calculate REAL budget utilization
+      const budgetUtilization =
+        project.budget > 0 ? (project.spent / project.budget) * 100 : 0;
+
+      // Calculate REAL variance (difference from budget)
+      const variance = project.budget - project.spent;
+      const variancePercent =
+        project.budget > 0 ? Math.abs((variance / project.budget) * 100) : 0;
+
+        // naka round na ito to 1 decimal place
+        // to be followed yung open approval check ko muna kung tama yung calculation sa budget
       const stats = {
-        budgetUtilization: 71.6, // fetch from budget api
-        variance: 2.8, // fetch from budget api
-        tasksCompleted: tasksCompletedPercent,
+        budgetUtilization: Math.round(budgetUtilization * 10) / 10, 
+        variance: Math.round(variancePercent * 10) / 10,
+        tasksCompleted: Math.round(tasksCompletedPercent * 10) / 10,
         totalTasks,
         completedTasks,
-        openApprovals: 3, // dito mag implement ng approval system later
+        openApprovals: 0, // ito to be followed muna
       };
 
       res.json(stats);
