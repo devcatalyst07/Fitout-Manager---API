@@ -10,6 +10,7 @@ import budgetRoutes from './routes/budget.routes'; // NEW
 import teamRoutes from './routes/team.routes'; // NEW
 import commentRoutes from "./routes/comment.routes";
 import activityLogRoutes from "./routes/activityLog.routes";
+import uploadRoutes from "./routes/upload.routes"; 
 
 const app = express();
 
@@ -58,6 +59,7 @@ app.use('/api/projects', teamRoutes);
 app.use('/api/documents', documentRoutes);
 app.use("/api/projects/:projectId/tasks", commentRoutes);
 app.use("/api/projects/:projectId/tasks", activityLogRoutes);
+app.use("/api", uploadRoutes); // for file upoads
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
