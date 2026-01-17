@@ -58,7 +58,7 @@ app.use('/api/projects', budgetRoutes);
 app.use('/api/projects', teamRoutes); 
 app.use('/api/documents', documentRoutes);
 app.use("/api/tasks", commentRoutes);
-app.use("/api/projects/:projectId/tasks", activityLogRoutes);
+app.use("/api/tasks", activityLogRoutes);
 app.use("/api", uploadRoutes); // for file upoads
 
 // Error handling middleware
