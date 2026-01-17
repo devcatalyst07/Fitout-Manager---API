@@ -179,7 +179,39 @@ router.put('/:projectId/tasks/:taskId', authMiddleware, adminOnly, async (req: A
       return res.status(404).json({ message: 'Task not found' });
     }
 
-    // Log status changes
+    // ========== LOG ALL CHANGES ==========
+
+    // 1. Log TITLE changes
+    if (oldTask.title !== updatedTask.title) {
+      await ActivityLog.create({
+        taskId,
+        userId: req.user.id,
+        userName: req.user.name,
+        userEmail: req.user.email,
+        action: 'updated',
+        field: 'title',
+        oldValue: oldTask.title,
+        newValue: updatedTask.title,
+        description: `${req.user.name} changed title from "${oldTask.title}" to "${updatedTask.title}"`,
+      });
+    }
+
+    // 2. Log DESCRIPTION changes
+    if (oldTask.description !== updatedTask.description) {
+      await ActivityLog.create({
+        taskId,
+        userId: req.user.id,
+        userName: req.user.name,
+        userEmail: req.user.email,
+        action: 'updated',
+        field: 'description',
+        oldValue: oldTask.description || '',
+        newValue: updatedTask.description || '',
+        description: `${req.user.name} updated the description`,
+      });
+    }
+
+    // 3. Log STATUS changes
     if (oldTask.status !== updatedTask.status) {
       await ActivityLog.create({
         taskId,
@@ -194,7 +226,7 @@ router.put('/:projectId/tasks/:taskId', authMiddleware, adminOnly, async (req: A
       });
     }
 
-    // Log priority changes
+    // 4. Log PRIORITY changes
     if (oldTask.priority !== updatedTask.priority) {
       await ActivityLog.create({
         taskId,
@@ -209,7 +241,7 @@ router.put('/:projectId/tasks/:taskId', authMiddleware, adminOnly, async (req: A
       });
     }
 
-    // Log progress changes
+    // 5. Log PROGRESS changes
     if (oldTask.progress !== updatedTask.progress) {
       await ActivityLog.create({
         taskId,
@@ -224,40 +256,89 @@ router.put('/:projectId/tasks/:taskId', authMiddleware, adminOnly, async (req: A
       });
     }
 
-    // Log assignee changes
+    // 6. Log START DATE changes
+    if (oldTask.startDate?.toString() !== updatedTask.startDate?.toString()) {
+      const oldDate = oldTask.startDate ? new Date(oldTask.startDate).toLocaleDateString() : 'Not set';
+      const newDate = updatedTask.startDate ? new Date(updatedTask.startDate).toLocaleDateString() : 'Not set';
+      
+      await ActivityLog.create({
+        taskId,
+        userId: req.user.id,
+        userName: req.user.name,
+        userEmail: req.user.email,
+        action: 'date_changed',
+        field: 'startDate',
+        oldValue: oldDate,
+        newValue: newDate,
+        description: `${req.user.name} changed start date from ${oldDate} to ${newDate}`,
+      });
+    }
+
+    // 7. Log DUE DATE changes
+    if (oldTask.dueDate?.toString() !== updatedTask.dueDate?.toString()) {
+      const oldDate = oldTask.dueDate ? new Date(oldTask.dueDate).toLocaleDateString() : 'Not set';
+      const newDate = updatedTask.dueDate ? new Date(updatedTask.dueDate).toLocaleDateString() : 'Not set';
+      
+      await ActivityLog.create({
+        taskId,
+        userId: req.user.id,
+        userName: req.user.name,
+        userEmail: req.user.email,
+        action: 'date_changed',
+        field: 'dueDate',
+        oldValue: oldDate,
+        newValue: newDate,
+        description: `${req.user.name} changed due date from ${oldDate} to ${newDate}`,
+      });
+    }
+
+    // 8. Log ASSIGNEE changes
     const oldAssigneeEmails = oldTask.assignees.map((a) => a.email).sort();
     const newAssigneeEmails = updatedTask.assignees.map((a) => a.email).sort();
 
     if (JSON.stringify(oldAssigneeEmails) !== JSON.stringify(newAssigneeEmails)) {
+      // Check for added assignees
       const added = newAssigneeEmails.filter((email) => !oldAssigneeEmails.includes(email));
+      
+      // Check for removed assignees
       const removed = oldAssigneeEmails.filter((email) => !newAssigneeEmails.includes(email));
 
+      // Log added assignees
       if (added.length > 0) {
         const addedNames = updatedTask.assignees
           .filter((a) => added.includes(a.email))
           .map((a) => a.name)
           .join(', ');
+        
         await ActivityLog.create({
           taskId,
           userId: req.user.id,
           userName: req.user.name,
           userEmail: req.user.email,
           action: 'assigned',
+          field: 'assignees',
+          oldValue: oldAssigneeEmails.join(', '),
+          newValue: newAssigneeEmails.join(', '),
           description: `${req.user.name} assigned ${addedNames} to the task`,
         });
       }
 
+      // Log removed assignees
       if (removed.length > 0) {
         const removedNames = oldTask.assignees
           .filter((a) => removed.includes(a.email))
           .map((a) => a.name)
           .join(', ');
+        
         await ActivityLog.create({
           taskId,
           userId: req.user.id,
           userName: req.user.name,
           userEmail: req.user.email,
           action: 'unassigned',
+          field: 'assignees',
+          oldValue: oldAssigneeEmails.join(', '),
+          newValue: newAssigneeEmails.join(', '),
           description: `${req.user.name} removed ${removedNames} from the task`,
         });
       }
