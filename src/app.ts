@@ -15,6 +15,7 @@ import overviewRoutes from "./routes/overview.routes";
 import approvalRoutes from "./routes/approval.routes";
 import insightsRoutes from "./routes/insights.routes";
 import activityRoutes from "./routes/activity.routes";
+import calendarRoutes from "./routes/calendarRoutes";
 
 const app = express();
 
@@ -68,6 +69,7 @@ app.use('/api/documents', documentRoutes);
 app.use("/api/tasks", commentRoutes);
 app.use("/api/tasks", activityLogRoutes);
 app.use("/api", uploadRoutes); // for file upoads
+app.use("/api", calendarRoutes);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
