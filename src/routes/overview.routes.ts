@@ -47,14 +47,21 @@ router.get(
   },
 );
 
-// GET upcoming deadlines (next 7 days)
+// GET upcoming deadlines
 router.get(
   "/:projectId/overview/deadlines",
   authMiddleware,
   async (req: AuthRequest, res) => {
     try {
       const { projectId } = req.params;
-      const days = parseInt(req.query.days as string) || 7;
+      const days = parseInt(req.query.days as string) || 7; // Default 7 days
+
+      // Validate days parameter
+      if (days < 1 || days > 90) {
+        return res.status(400).json({
+          message: "Days parameter must be between 1 and 90",
+        });
+      }
 
       const now = new Date();
       const futureDate = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
