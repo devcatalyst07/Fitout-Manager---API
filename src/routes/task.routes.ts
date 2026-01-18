@@ -4,6 +4,7 @@ import { adminOnly } from '../middleware/role';
 import Task from '../models/Task';
 import Project from '../models/Projects';
 import ActivityLog from '../models/ActivityLog';
+import { activityHelpers } from "../utils/activityLogger";
 
 const router = Router();
 
@@ -342,6 +343,16 @@ router.put('/:projectId/tasks/:taskId', authMiddleware, adminOnly, async (req: A
           description: `${req.user.name} removed ${removedNames} from the task`,
         });
       }
+    }
+
+    if (oldTask?.status !== "Done" && updatedTask.status === "Done") {
+      await activityHelpers.taskCompleted(
+        req.params.projectId,
+        req.user.id,
+        req.user.name || "Admin",
+        updatedTask.title,
+        taskId,
+      );
     }
 
     res.json({

@@ -14,6 +14,7 @@ import uploadRoutes from "./routes/upload.routes";
 import overviewRoutes from "./routes/overview.routes";
 import approvalRoutes from "./routes/approval.routes";
 import insightsRoutes from "./routes/insights.routes";
+import activityRoutes from "./routes/activity.routes";
 
 const app = express();
 
@@ -61,6 +62,7 @@ app.use('/api/projects', budgetRoutes);
 app.use('/api/projects', teamRoutes);
 app.use("/api/projects", overviewRoutes); // for project overview
 app.use("/api/projects", insightsRoutes); // for project insights
+app.use("/api/projects", activityRoutes); // for project activity logs
 app.use("/api/projects", approvalRoutes); // for approvals
 app.use('/api/documents', documentRoutes);
 app.use("/api/tasks", commentRoutes);

@@ -4,6 +4,7 @@ import { adminOnly } from '../middleware/role';
 import TeamMember from '../models/TeamMember';
 import Project from '../models/Projects';
 import User from '../models/User';
+import { activityHelpers } from "../utils/activityLogger";
 
 const router = Router();
 
@@ -31,66 +32,88 @@ router.get('/:projectId/team', authMiddleware, adminOnly, async (req, res) => {
 });
 
 // ADD team member to project (Admin only)
-router.post('/:projectId/team', authMiddleware, adminOnly, async (req: AuthRequest, res) => {
-  try {
-    const { projectId } = req.params;
-    const { userEmail, role } = req.body;
+router.post(
+  "/:projectId/team",
+  authMiddleware,
+  adminOnly,
+  async (req: AuthRequest, res) => {
+    try {
+      const { projectId } = req.params;
+      const { userEmail, role } = req.body;
 
-    // Validate required fields
-    if (!userEmail) {
-      return res.status(400).json({ message: 'User email is required' });
+      // Validate required fields
+      if (!userEmail) {
+        return res.status(400).json({ message: "User email is required" });
+      }
+
+      // Verify project exists
+      const project = await Project.findById(projectId);
+      if (!project) {
+        return res.status(404).json({ message: "Project not found" });
+      }
+
+      // Find user by email
+      const user = await User.findOne({ email: userEmail.toLowerCase() });
+      if (!user) {
+        return res
+          .status(404)
+          .json({ message: "User not found with this email" });
+      }
+
+      // Check if user is already a team member
+      const existingMember = await TeamMember.findOne({
+        userId: user._id,
+        projectId,
+        status: { $ne: "removed" },
+      });
+
+      if (existingMember) {
+        return res
+          .status(400)
+          .json({ message: "User is already a team member" });
+      }
+
+      const newTeamMember = await TeamMember.create({
+        userId: user._id,
+        projectId,
+        role: role || "Member",
+        status: "active",
+        addedBy: req.user.id,
+      });
+
+      const populatedMember = await TeamMember.findById(newTeamMember._id)
+        .populate("userId", "name email")
+        .populate("addedBy", "name email");
+
+      if (populatedMember) {
+        await activityHelpers.teamMemberAdded(
+          projectId,
+          req.user.id,
+          req.user.name || "Admin",
+          (populatedMember.userId as any).name || "Unknown",
+        );
+      }
+
+      res.status(201).json({
+        message: "Team member added successfully",
+        teamMember: populatedMember,
+      });
+    } catch (error: any) {
+      console.error("Add team member error:", error);
+
+      // Handle duplicate key error
+      if (error.code === 11000) {
+        return res
+          .status(400)
+          .json({ message: "User is already a team member" });
+      }
+
+      res
+        .status(500)
+        .json({ message: "Failed to add team member", error: error.message });
     }
-
-    // Verify project exists
-    const project = await Project.findById(projectId);
-    if (!project) {
-      return res.status(404).json({ message: 'Project not found' });
-    }
-
-    // Find user by email
-    const user = await User.findOne({ email: userEmail.toLowerCase() });
-    if (!user) {
-      return res.status(404).json({ message: 'User not found with this email' });
-    }
-
-    // Check if user is already a team member
-    const existingMember = await TeamMember.findOne({
-      userId: user._id,
-      projectId,
-      status: { $ne: 'removed' }
-    });
-
-    if (existingMember) {
-      return res.status(400).json({ message: 'User is already a team member' });
-    }
-
-    const newTeamMember = await TeamMember.create({
-      userId: user._id,
-      projectId,
-      role: role || 'Member',
-      status: 'active',
-      addedBy: req.user.id,
-    });
-
-    const populatedMember = await TeamMember.findById(newTeamMember._id)
-      .populate('userId', 'name email')
-      .populate('addedBy', 'name email');
-
-    res.status(201).json({
-      message: 'Team member added successfully',
-      teamMember: populatedMember,
-    });
-  } catch (error: any) {
-    console.error('Add team member error:', error);
-    
-    // Handle duplicate key error
-    if (error.code === 11000) {
-      return res.status(400).json({ message: 'User is already a team member' });
-    }
-    
-    res.status(500).json({ message: 'Failed to add team member', error: error.message });
-  }
-});
+  },
+);
 
 // UPDATE team member role (Admin only)
 router.put('/:projectId/team/:memberId', authMiddleware, adminOnly, async (req, res) => {

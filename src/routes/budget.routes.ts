@@ -4,6 +4,7 @@ import { adminOnly } from '../middleware/role';
 import BudgetItem from '../models/BudgetItem';
 import Project from '../models/Projects';
 import Approval from "../models/Approval";
+import { activityHelpers } from "../utils/activityLogger";
 
 const router = Router();
 
@@ -176,6 +177,15 @@ router.post('/:projectId/budget', authMiddleware, adminOnly, async (req: AuthReq
 
     const populatedItem = await BudgetItem.findById(newBudgetItem._id)
       .populate('createdBy', 'name email');
+
+    // For activity log in overview
+    await activityHelpers.budgetCreated(
+      projectId,
+      req.user.id,
+      req.user.name || "Admin",
+      quantity * unitCost,
+      category,
+    );
 
     res.status(201).json({
       message: 'Budget item created successfully and sent for approval',
