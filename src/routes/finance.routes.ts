@@ -9,7 +9,7 @@ import Approval from '../models/Approval';
 const router = Router();
 
 // GET finance overview/statistics
-router.get('/finance/overview', authMiddleware, adminOnly, async (req, res) => {
+router.get('/finance', authMiddleware, adminOnly, async (req, res) => {
   try {
     console.log('Finance overview requested'); // ADD LOGGING
     const { brand, region } = req.query;
