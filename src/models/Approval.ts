@@ -1,81 +1,87 @@
-import mongoose, { Document, Schema } from "mongoose";
+// Updated Approval Model (src/models/Approval.ts)
+import mongoose, { Document, Schema } from 'mongoose';
 
 export interface IApproval extends Document {
+  type: 'Budget Change' | 'Change Order' | 'Contract' | 'Payment' | 'Other';
+  description: string;
+  amount: number;
+  status: 'pending' | 'approved' | 'rejected';
   projectId: mongoose.Types.ObjectId;
-  itemType: "BudgetItem" | "Task" | "Document";
-  itemId: mongoose.Types.ObjectId;
-  itemDescription: string;
+  budgetItemId?: mongoose.Types.ObjectId;
   requestedBy: mongoose.Types.ObjectId;
-  status: "Pending" | "Approved" | "Rejected";
   approvedBy?: mongoose.Types.ObjectId;
   approvedAt?: Date;
-  rejectionReason?: string;
-  metadata: {
-    amount?: number;
-    category?: string;
-    vendor?: string;
-    taskTitle?: string;
-    documentName?: string;
-  };
+  rejectionReason?: string; // ADD THIS FIELD
+  comments?: string;
+  attachments?: Array<{
+    fileName: string;
+    fileUrl: string;
+    uploadedAt: Date;
+  }>;
   createdAt: Date;
   updatedAt: Date;
 }
 
 const approvalSchema = new Schema<IApproval>(
   {
-    projectId: {
-      type: Schema.Types.ObjectId,
-      ref: "Project",
-      required: true,
-    },
-    itemType: {
+    type: {
       type: String,
-      enum: ["BudgetItem", "Task", "Document"],
+      enum: ['Budget Change', 'Change Order', 'Contract', 'Payment', 'Other'],
       required: true,
     },
-    itemId: {
-      type: Schema.Types.ObjectId,
-      required: true,
-    },
-    itemDescription: {
+    description: {
       type: String,
       required: true,
     },
-    requestedBy: {
-      type: Schema.Types.ObjectId,
-      ref: "User",
+    amount: {
+      type: Number,
       required: true,
     },
     status: {
       type: String,
-      enum: ["Pending", "Approved", "Rejected"],
-      default: "Pending",
+      enum: ['pending', 'approved', 'rejected'],
+      default: 'pending',
+    },
+    projectId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Project',
+      required: true,
+    },
+    budgetItemId: {
+      type: Schema.Types.ObjectId,
+      ref: 'BudgetItem',
+    },
+    requestedBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
     },
     approvedBy: {
       type: Schema.Types.ObjectId,
-      ref: "User",
+      ref: 'User',
     },
     approvedAt: {
       type: Date,
     },
-    rejectionReason: {
+    rejectionReason: { // ADD THIS FIELD
       type: String,
     },
-    metadata: {
-      amount: Number,
-      category: String,
-      vendor: String,
-      taskTitle: String,
-      documentName: String,
+    comments: {
+      type: String,
     },
+    attachments: [
+      {
+        fileName: String,
+        fileUrl: String,
+        uploadedAt: { type: Date, default: Date.now },
+      },
+    ],
   },
   {
     timestamps: true,
-  },
+  }
 );
 
-// Index for faster queries
-approvalSchema.index({ projectId: 1, status: 1 });
-approvalSchema.index({ status: 1, createdAt: -1 });
+const Approval = mongoose.model<IApproval>('Approval', approvalSchema);
 
-export default mongoose.model<IApproval>("Approval", approvalSchema);
+export default Approval;

@@ -44,19 +44,22 @@ router.get(
     try {
       const { projectId } = req.params;
 
+      // FIXED: Changed "Pending" to "pending"
       const pendingCount = await Approval.countDocuments({
         projectId,
-        status: "Pending",
+        status: "pending",
       });
 
+      // FIXED: Changed "Approved" to "approved"
       const approvedCount = await Approval.countDocuments({
         projectId,
-        status: "Approved",
+        status: "approved",
       });
 
+      // FIXED: Changed "Rejected" to "rejected"
       const rejectedCount = await Approval.countDocuments({
         projectId,
-        status: "Rejected",
+        status: "rejected",
       });
 
       res.json({
@@ -91,11 +94,13 @@ router.put(
         return res.status(404).json({ message: "Approval not found" });
       }
 
-      if (approval.status !== "Pending") {
+      // FIXED: Changed "Pending" to "pending"
+      if (approval.status !== "pending") {
         return res.status(400).json({ message: "Approval already processed" });
       }
 
-      approval.status = "Approved";
+      // FIXED: Changed "Approved" to "approved"
+      approval.status = "approved";
       approval.approvedBy = req.user.id;
       approval.approvedAt = new Date();
       await approval.save();
@@ -128,11 +133,13 @@ router.put(
         return res.status(404).json({ message: "Approval not found" });
       }
 
-      if (approval.status !== "Pending") {
+      // FIXED: Changed "Pending" to "pending"
+      if (approval.status !== "pending") {
         return res.status(400).json({ message: "Approval already processed" });
       }
 
-      approval.status = "Rejected";
+      // FIXED: Changed "Rejected" to "rejected"
+      approval.status = "rejected";
       approval.approvedBy = req.user.id;
       approval.approvedAt = new Date();
       approval.rejectionReason = reason || "No reason provided";

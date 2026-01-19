@@ -16,6 +16,8 @@ import approvalRoutes from "./routes/approval.routes";
 import insightsRoutes from "./routes/insights.routes";
 import activityRoutes from "./routes/activity.routes";
 import calendarRoutes from "./routes/calendarRoutes";
+import financeRoutes from './routes/finance.routes';
+import dashboardRoutes from './routes/dashboard.routes';
 
 const app = express();
 
@@ -59,6 +61,7 @@ app.get("/health", (_, res) => {
 // Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/admin", adminRoutes);
+app.use('/api/admin', dashboardRoutes);
 app.use("/api/projects", projectRoutes);
 app.use("/api/projects", taskRoutes);
 app.use("/api/projects", budgetRoutes);
@@ -72,6 +75,7 @@ app.use("/api/tasks", commentRoutes);
 app.use("/api/tasks", activityLogRoutes);
 app.use("/api", uploadRoutes);
 app.use("/api", calendarRoutes);
+app.use('/api/admin', financeRoutes);
 
 // Error handling middleware
 app.use(

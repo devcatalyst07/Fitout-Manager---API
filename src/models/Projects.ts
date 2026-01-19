@@ -15,6 +15,10 @@ export interface IProject extends Document {
   status: 'Planning' | 'In Progress' | 'Completed' | 'On Hold';
   userId: mongoose.Types.ObjectId;
   createdBy: 'user' | 'admin';
+  region?: string; // ADD THIS
+  eacPolicyType?: string; // ADD THIS
+  eacFactor?: number; // ADD THIS
+  manualForecast?: number; // ADD THIS
   createdAt: Date;
   updatedAt: Date;
 }
@@ -74,6 +78,18 @@ const ProjectSchema: Schema = new Schema(
       type: String,
       enum: ['user', 'admin'],
       default: 'user',
+    },
+    region: { // ADD THIS
+      type: String,
+    },
+    eacPolicyType: { // ADD THIS
+      type: String,
+    },
+    eacFactor: { // ADD THIS
+      type: Number,
+    },
+    manualForecast: { // ADD THIS
+      type: Number,
     },
   },
   {
