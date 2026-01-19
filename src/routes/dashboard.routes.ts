@@ -5,6 +5,7 @@ import Project from '../models/Projects';
 import Task from '../models/Task';
 import BudgetItem from '../models/BudgetItem';
 import Brand from '../models/Brand';
+import mongoose from 'mongoose';
 
 const router = Router();
 
@@ -17,14 +18,6 @@ router.get('/dashboard/stats', authMiddleware, adminOnly, async (req, res) => {
     const projects = await Project.find().populate('userId', 'name email');
     console.log(`Found ${projects.length} projects`);
     
-    // Get all tasks
-    const allTasks = await Task.find();
-    console.log(`Found ${allTasks.length} total tasks`);
-    
-    // Get all budget items
-    const allBudgetItems = await BudgetItem.find();
-    console.log(`Found ${allBudgetItems.length} total budget items`);
-
     // Calculate project stats
     const totalProjects = projects.length;
     const activeProjects = projects.filter(p => p.status === 'In Progress').length;
@@ -50,93 +43,95 @@ router.get('/dashboard/stats', authMiddleware, adminOnly, async (req, res) => {
     ).length;
     const activeChange = activeProjects - activeLastWeek;
 
-    // ========== ACTIVE TASKS - SIMPLIFIED APPROACH ==========
+    // ========== ACTIVE TASKS - FIXED APPROACH ==========
     console.log('Fetching active tasks...');
     
-    // Get all non-Done tasks
-    const activeTasksRaw = await Task.find({ 
-      status: { $in: ['Backlog', 'In Progress', 'Blocked'] } 
-    }).sort({ dueDate: 1 }).limit(10);
-
-    console.log(`Found ${activeTasksRaw.length} active tasks`);
-
-    // Manually populate project data
-    const activeTasks = [];
-    for (const task of activeTasksRaw) {
-      const project = projects.find(p => p._id.toString() === task.projectId.toString());
-      if (project) {
-        activeTasks.push({
-          _id: task._id,
-          title: task.title,
-          status: task.status,
-          priority: task.priority,
-          dueDate: task.dueDate,
-          assignees: task.assignees || [],
-          projectId: {
-            _id: project._id,
-            projectName: project.projectName,
-            brand: project.brand
-          }
-        });
-      } else {
-        console.log(`Warning: Task ${task._id} has invalid projectId: ${task.projectId}`);
-      }
-    }
-    
-    console.log(`Valid active tasks: ${activeTasks.length}`);
-    console.log('Active tasks sample:', activeTasks.length > 0 ? activeTasks[0] : 'none');
-
-    // ========== BUDGET ITEMS - SIMPLIFIED APPROACH ==========
-    console.log('Fetching budget items...');
-    
-    // Get active project IDs (not completed)
+    // Get project IDs that are not completed
     const activeProjectIds = projects
       .filter(p => p.status !== 'Completed')
-      .map(p => p._id.toString());
-    
+      .map(p => p._id);
+
     console.log(`Active project IDs count: ${activeProjectIds.length}`);
 
-    // Get budget items from active projects
-    const budgetItemsRaw = await BudgetItem.find().sort({ createdAt: -1 }).limit(50);
-    
-    console.log(`Found ${budgetItemsRaw.length} budget items total`);
+    // Query tasks directly with projectId filter
+    const activeTasks = await Task.find({ 
+      projectId: { $in: activeProjectIds },
+      status: { $in: ['Backlog', 'In Progress', 'Blocked'] } 
+    })
+    .sort({ dueDate: 1 })
+    .limit(10)
+    .lean(); // Use lean() for better performance
 
-    // Manually populate and filter
-    const budgetTasks = [];
-    for (const item of budgetItemsRaw) {
+    console.log(`Found ${activeTasks.length} active tasks from database`);
+
+    // Manually populate project data
+    const activeTasksPopulated = activeTasks.map(task => {
+      const project = projects.find(p => p._id.toString() === task.projectId.toString());
+      return {
+        _id: task._id,
+        title: task.title,
+        status: task.status,
+        priority: task.priority,
+        dueDate: task.dueDate,
+        assignees: task.assignees || [],
+        projectId: project ? {
+          _id: project._id,
+          projectName: project.projectName,
+          brand: project.brand
+        } : null
+      };
+    }).filter(task => task.projectId !== null); // Remove tasks with invalid projects
+
+    console.log(`Valid active tasks after population: ${activeTasksPopulated.length}`);
+
+    // ========== BUDGET ITEMS - FIXED APPROACH ==========
+    console.log('Fetching budget items...');
+
+    // Query budget items directly with projectId filter
+    const budgetItems = await BudgetItem.find({ 
+      projectId: { $in: activeProjectIds }
+    })
+    .sort({ createdAt: -1 })
+    .limit(10)
+    .lean();
+
+    console.log(`Found ${budgetItems.length} budget items from database`);
+
+    // Manually populate project data
+    const budgetTasksPopulated = budgetItems.map(item => {
       const project = projects.find(p => p._id.toString() === item.projectId.toString());
-      
-      // Include if project exists AND is not completed
-      if (project && activeProjectIds.includes(project._id.toString())) {
-        budgetTasks.push({
-          _id: item._id,
-          description: item.description,
-          vendor: item.vendor,
-          quantity: item.quantity,
-          unitCost: item.unitCost,
-          committedStatus: item.committedStatus,
-          category: item.category,
-          projectId: {
-            _id: project._id,
-            projectName: project.projectName,
-            brand: project.brand
-          }
-        });
-        
-        if (budgetTasks.length >= 10) break; // Limit to 10
-      }
-    }
+      return {
+        _id: item._id,
+        description: item.description,
+        vendor: item.vendor,
+        quantity: item.quantity,
+        unitCost: item.unitCost,
+        committedStatus: item.committedStatus,
+        category: item.category,
+        projectId: project ? {
+          _id: project._id,
+          projectName: project.projectName,
+          brand: project.brand
+        } : null
+      };
+    }).filter(item => item.projectId !== null); // Remove items with invalid projects
 
-    console.log(`Valid budget items: ${budgetTasks.length}`);
-    console.log('Budget items sample:', budgetTasks.length > 0 ? budgetTasks[0] : 'none');
+    console.log(`Valid budget items after population: ${budgetTasksPopulated.length}`);
 
-    // ========== PROJECT ANALYTICS ==========
+    // ========== PROJECT ANALYTICS - FIXED ==========
     console.log('Calculating project analytics...');
-    const projectAnalytics = [];
     
-    for (const project of projects) {
-      const projectTasks = allTasks.filter(t => t.projectId.toString() === project._id.toString());
-      const projectBudgetItems = allBudgetItems.filter(b => b.projectId.toString() === project._id.toString());
+    // Get all tasks and budget items once
+    const allTasks = await Task.find().lean();
+    const allBudgetItems = await BudgetItem.find().lean();
+    
+    console.log(`Total tasks in DB: ${allTasks.length}`);
+    console.log(`Total budget items in DB: ${allBudgetItems.length}`);
+
+    const projectAnalytics = projects.map(project => {
+      const projectIdStr = project._id.toString();
+      const projectTasks = allTasks.filter(t => t.projectId.toString() === projectIdStr);
+      const projectBudgetItems = allBudgetItems.filter(b => b.projectId.toString() === projectIdStr);
 
       const taskStatusData = [
         { status: 'Backlog', count: projectTasks.filter(t => t.status === 'Backlog').length },
@@ -152,7 +147,7 @@ router.get('/dashboard/stats', authMiddleware, adminOnly, async (req, res) => {
         { status: 'Paid', amount: projectBudgetItems.filter(b => b.committedStatus === 'Paid').reduce((sum, b) => sum + (b.quantity * b.unitCost), 0) },
       ];
 
-      projectAnalytics.push({
+      return {
         projectId: project._id,
         projectName: project.projectName,
         brand: project.brand,
@@ -162,19 +157,17 @@ router.get('/dashboard/stats', authMiddleware, adminOnly, async (req, res) => {
         completedTasks: projectTasks.filter(t => t.status === 'Done').length,
         totalBudget: project.budget,
         totalSpent: project.spent,
-      });
-    }
+      };
+    });
 
     console.log(`Generated analytics for ${projectAnalytics.length} projects`);
 
-    // ========== BRAND ANALYTICS ==========
+    // ========== BRAND ANALYTICS - FIXED ==========
     console.log('Calculating brand analytics...');
     const brands = await Brand.find({ isActive: true });
     console.log(`Found ${brands.length} active brands`);
     
-    const brandAnalytics = [];
-    
-    for (const brand of brands) {
+    const brandAnalytics = brands.map(brand => {
       const brandProjects = projects.filter(p => p.brand === brand.name);
       const brandProjectIds = brandProjects.map(p => p._id.toString());
       
@@ -195,7 +188,7 @@ router.get('/dashboard/stats', authMiddleware, adminOnly, async (req, res) => {
         { status: 'Paid', amount: brandBudgetItems.filter(b => b.committedStatus === 'Paid').reduce((sum, b) => sum + (b.quantity * b.unitCost), 0) },
       ];
 
-      brandAnalytics.push({
+      return {
         brandId: brand._id,
         brandName: brand.name,
         projectCount: brandProjects.length,
@@ -205,16 +198,16 @@ router.get('/dashboard/stats', authMiddleware, adminOnly, async (req, res) => {
         completedTasks: brandTasks.filter(t => t.status === 'Done').length,
         totalBudget: brandProjects.reduce((sum, p) => sum + (p.budget || 0), 0),
         totalSpent: brandProjects.reduce((sum, p) => sum + (p.spent || 0), 0),
-      });
-    }
+      };
+    });
 
     console.log(`Generated analytics for ${brandAnalytics.length} brands`);
     
     // Final summary
     console.log('=== FINAL RESPONSE SUMMARY ===');
     console.log(`Projects: ${totalProjects}`);
-    console.log(`Active Tasks to send: ${activeTasks.length}`);
-    console.log(`Budget Items to send: ${budgetTasks.length}`);
+    console.log(`Active Tasks to send: ${activeTasksPopulated.length}`);
+    console.log(`Budget Items to send: ${budgetTasksPopulated.length}`);
     console.log(`Project Analytics: ${projectAnalytics.length}`);
     console.log(`Brand Analytics: ${brandAnalytics.length}`);
     console.log('=== Dashboard Stats Request Completed ===');
@@ -229,8 +222,8 @@ router.get('/dashboard/stats', authMiddleware, adminOnly, async (req, res) => {
         projectsThisMonth,
         activeChange,
       },
-      activeTasks,
-      budgetTasks,
+      activeTasks: activeTasksPopulated,
+      budgetTasks: budgetTasksPopulated,
       projectAnalytics,
       brandAnalytics,
     };
