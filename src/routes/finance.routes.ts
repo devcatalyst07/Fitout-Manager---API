@@ -8,14 +8,17 @@ import Approval from '../models/Approval';
 
 const router = Router();
 
-// GET finance overview/statistics
-router.get('/finance', authMiddleware, adminOnly, async (req, res) => {
+// ============================================
+// GET /api/finance - Finance Overview
+// ============================================
+router.get('/', authMiddleware, adminOnly, async (req, res) => {
   try {
-    console.log('📊 Finance overview requested');
+    console.log('📊 Finance API called');
+    console.log('Query params:', req.query);
+    
     const { brand, region } = req.query;
-    console.log('🔍 Filters:', { brand, region });
 
-    // Build filter query
+    // Build filter
     let projectFilter: any = {};
     if (brand && brand !== 'All') {
       projectFilter.brand = brand;
@@ -24,14 +27,14 @@ router.get('/finance', authMiddleware, adminOnly, async (req, res) => {
       projectFilter.region = region;
     }
 
-    console.log('🔎 Project filter:', projectFilter);
+    console.log('Project filter:', projectFilter);
 
-    // Get filtered projects
-    const projects = await Project.find(projectFilter).populate('userId', 'name email');
-    console.log(`✅ Projects found: ${projects.length}`);
+    // Fetch projects
+    const projects = await Project.find(projectFilter);
+    console.log(`Found ${projects.length} projects`);
 
+    // If no projects, return empty structure
     if (projects.length === 0) {
-      console.log('⚠️ No projects found with current filters');
       return res.json({
         summary: {
           totalBudget: 0,
@@ -60,10 +63,9 @@ router.get('/finance', authMiddleware, adminOnly, async (req, res) => {
       });
     }
 
-    // Get all budget items for these projects
+    // Get budget items
     const projectIds = projects.map(p => p._id);
     const budgetItems = await BudgetItem.find({ projectId: { $in: projectIds } });
-    console.log(`💰 Budget items found: ${budgetItems.length}`);
 
     // Get pending approvals
     const pendingApprovals = await Approval.find({ 
@@ -73,32 +75,28 @@ router.get('/finance', authMiddleware, adminOnly, async (req, res) => {
       .populate('projectId', 'projectName')
       .limit(5);
 
-    // Calculate portfolio totals
+    // Calculate totals
     const totalBudget = projects.reduce((sum, p) => sum + (p.budget || 0), 0);
     
-    // Calculate committed (Committed + Invoiced + Paid)
     const totalCommitted = budgetItems
       .filter(b => ['Committed', 'Invoiced', 'Paid'].includes(b.committedStatus))
       .reduce((sum, b) => sum + (b.quantity * b.unitCost), 0);
 
-    // Calculate by status
     const totalInvoiced = budgetItems
-      .filter(b => b.committedStatus === 'Invoiced' || b.committedStatus === 'Paid')
+      .filter(b => ['Invoiced', 'Paid'].includes(b.committedStatus))
       .reduce((sum, b) => sum + (b.quantity * b.unitCost), 0);
 
     const totalPaid = budgetItems
       .filter(b => b.committedStatus === 'Paid')
       .reduce((sum, b) => sum + (b.quantity * b.unitCost), 0);
 
-    // Calculate accruals (Committed but not yet invoiced)
     const totalAccruals = budgetItems
       .filter(b => b.committedStatus === 'Committed')
       .reduce((sum, b) => sum + (b.quantity * b.unitCost), 0);
 
-    // Calculate headroom (Budget - Committed)
     const totalHeadroom = totalBudget - totalCommitted;
 
-    // Calculate EAC using project-specific factors or default 0.85
+    // Calculate EAC
     const totalEAC = projects.reduce((sum, project) => {
       const projectBudgetItems = budgetItems.filter(b => 
         b.projectId.toString() === project._id.toString()
@@ -110,7 +108,6 @@ router.get('/finance', authMiddleware, adminOnly, async (req, res) => {
         if (['Paid', 'Invoiced', 'Committed'].includes(b.committedStatus)) {
           return itemSum + (b.quantity * b.unitCost);
         } else {
-          // Planned items: apply factor
           return itemSum + (b.quantity * b.unitCost * projectEacFactor);
         }
       }, 0);
@@ -118,13 +115,10 @@ router.get('/finance', authMiddleware, adminOnly, async (req, res) => {
       return sum + projectEAC;
     }, 0);
 
-    // Calculate variance (Budget - EAC)
     const totalVariance = totalBudget - totalEAC;
-
-    // Calculate utilisation percentage
     const totalUtilisation = totalBudget > 0 ? (totalCommitted / totalBudget) * 100 : 0;
 
-    // Count projects at risk (utilisation > 90% or variance < 0)
+    // Projects at risk
     const projectsAtRisk = projects.filter(p => {
       const projectBudgetItems = budgetItems.filter(b => 
         b.projectId.toString() === p._id.toString()
@@ -149,7 +143,7 @@ router.get('/finance', authMiddleware, adminOnly, async (req, res) => {
       return utilisation > 90 || variance < 0;
     }).length;
 
-    // Calculate percentage change for committed (comparing to last month)
+    // Committed change
     const now = new Date();
     const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const lastMonthBudgetItems = budgetItems.filter(b => 
@@ -163,7 +157,7 @@ router.get('/finance', authMiddleware, adminOnly, async (req, res) => {
       ? ((totalCommitted - lastMonthCommitted) / lastMonthCommitted) * 100 
       : 0;
 
-    // Build project details with all calculations
+    // Project details
     const projectDetails = projects.map(project => {
       const projectBudgetItems = budgetItems.filter(b => 
         b.projectId.toString() === project._id.toString()
@@ -174,7 +168,7 @@ router.get('/finance', authMiddleware, adminOnly, async (req, res) => {
         .reduce((sum, b) => sum + (b.quantity * b.unitCost), 0);
 
       const invoiced = projectBudgetItems
-        .filter(b => b.committedStatus === 'Invoiced' || b.committedStatus === 'Paid')
+        .filter(b => ['Invoiced', 'Paid'].includes(b.committedStatus))
         .reduce((sum, b) => sum + (b.quantity * b.unitCost), 0);
 
       const paid = projectBudgetItems
@@ -187,7 +181,6 @@ router.get('/finance', authMiddleware, adminOnly, async (req, res) => {
 
       const headroom = project.budget - committed;
 
-      // EAC calculation with project-specific factor
       const projectEacFactor = project.eacFactor || 0.85;
       const eac = projectBudgetItems.reduce((sum, b) => {
         if (['Paid', 'Invoiced', 'Committed'].includes(b.committedStatus)) {
@@ -218,12 +211,12 @@ router.get('/finance', authMiddleware, adminOnly, async (req, res) => {
       };
     });
 
-    // Get unique brands and regions for filters
+    // Get filters
     const brands = await Brand.find({ isActive: true }).select('name');
     const allProjects = await Project.find();
     const regions = [...new Set(allProjects.map(p => p.region || 'Unassigned Region'))];
 
-    console.log('✅ Finance data compiled successfully');
+    console.log('✅ Sending finance data');
 
     res.json({
       summary: {
@@ -252,7 +245,7 @@ router.get('/finance', authMiddleware, adminOnly, async (req, res) => {
       },
     });
   } catch (error: any) {
-    console.error('❌ Get finance overview error:', error);
+    console.error('❌ Finance error:', error);
     res.status(500).json({ 
       message: 'Failed to fetch finance overview',
       error: error.message 
@@ -260,34 +253,35 @@ router.get('/finance', authMiddleware, adminOnly, async (req, res) => {
   }
 });
 
-// UPDATE project EAC settings
-router.put('/finance/projects/:projectId/eac-settings', authMiddleware, adminOnly, async (req, res) => {
+// ============================================
+// PUT /api/finance/projects/:projectId/eac-settings
+// ============================================
+router.put('/projects/:projectId/eac-settings', authMiddleware, adminOnly, async (req, res) => {
   try {
     const { projectId } = req.params;
     const { eacPolicyType, eacFactor, manualForecast } = req.body;
 
-    console.log('🔧 Updating EAC settings:', { projectId, eacPolicyType, eacFactor, manualForecast });
+    console.log('🔧 Updating EAC:', { projectId, eacPolicyType, eacFactor });
 
     const project = await Project.findById(projectId);
     if (!project) {
       return res.status(404).json({ message: 'Project not found' });
     }
 
-    // Update EAC settings
     project.eacPolicyType = eacPolicyType;
     project.eacFactor = eacFactor;
     project.manualForecast = manualForecast;
 
     await project.save();
 
-    console.log('✅ EAC settings updated successfully');
+    console.log('✅ EAC updated');
 
     res.json({
       message: 'EAC settings updated successfully',
       project,
     });
   } catch (error: any) {
-    console.error('❌ Update EAC settings error:', error);
+    console.error('❌ EAC update error:', error);
     res.status(500).json({ 
       message: 'Failed to update EAC settings',
       error: error.message 
