@@ -18,6 +18,7 @@ import overviewRoutes from './routes/overview.routes';
 import approvalRoutes from './routes/approval.routes';
 import insightsRoutes from './routes/insights.routes';
 import activityRoutes from './routes/activity.routes';
+import calendarRoutes from "./routes/calendarRoutes";
 
 const app = express();
 
@@ -69,34 +70,31 @@ app.use('/api/projects', projectRoutes);
 app.use('/api/projects', taskRoutes);
 app.use('/api/projects', budgetRoutes);
 app.use('/api/projects', teamRoutes);
-app.use('/api/projects', overviewRoutes);
-app.use('/api/projects', insightsRoutes);
-app.use('/api/projects', activityRoutes);
-app.use('/api/projects', approvalRoutes);
-
+app.use("/api/projects", overviewRoutes); 
+app.use("/api/projects", insightsRoutes); 
+app.use("/api/projects", activityRoutes); 
+app.use("/api/projects", approvalRoutes); 
 app.use('/api/documents', documentRoutes);
+app.use("/api/tasks", commentRoutes);
+app.use("/api/tasks", activityLogRoutes);
+app.use("/api", uploadRoutes); 
+app.use("/api", calendarRoutes);
 
-app.use('/api/tasks', commentRoutes);
-app.use('/api/tasks', activityLogRoutes);
-
-app.use('/api', uploadRoutes);
-
-// ===== Error Handling =====
 app.use(
   (
     err: any,
-    _req: express.Request,
+    req: express.Request,
     res: express.Response,
-    _next: express.NextFunction
+    next: express.NextFunction,
   ) => {
-    console.error('Error:', err);
-
+    console.error("Error:", err);
     res.status(500).json({
-      message: 'Internal server error',
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined,
+      message: "Internal server error",
+      error: process.env.NODE_ENV === "development" ? err.message : undefined,
     });
-  }
+  },
 );
+
 
 // ===== 404 Route =====
 app.use((_req, res) => {
