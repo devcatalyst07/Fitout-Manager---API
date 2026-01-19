@@ -11,7 +11,9 @@ const router = Router();
 // GET finance overview/statistics
 router.get('/finance/overview', authMiddleware, adminOnly, async (req, res) => {
   try {
+    console.log('Finance overview requested'); // ADD LOGGING
     const { brand, region } = req.query;
+    console.log('Filters:', { brand, region }); // ADD LOGGING
 
     // Build filter query
     let projectFilter: any = {};
@@ -24,10 +26,12 @@ router.get('/finance/overview', authMiddleware, adminOnly, async (req, res) => {
 
     // Get filtered projects
     const projects = await Project.find(projectFilter).populate('userId', 'name email');
+    console.log('Projects found:', projects.length); // ADD LOGGING
 
     // Get all budget items for these projects
     const projectIds = projects.map(p => p._id);
     const budgetItems = await BudgetItem.find({ projectId: { $in: projectIds } });
+    console.log('Budget items found:', budgetItems.length); // ADD LOGGING
 
     // Get pending approvals
     const pendingApprovals = await Approval.find({ 

@@ -5,6 +5,7 @@ import authRoutes from "./routes/auth.routes";
 import adminRoutes from "./routes/admin.routes";
 import projectRoutes from "./routes/project.routes";
 import documentRoutes from "./routes/document.routes";
+import financeRoutes from './routes/finance.routes';
 import taskRoutes from "./routes/task.routes"; // NEW
 import budgetRoutes from "./routes/budget.routes"; // NEW
 import teamRoutes from "./routes/team.routes"; // NEW
@@ -16,7 +17,6 @@ import approvalRoutes from "./routes/approval.routes";
 import insightsRoutes from "./routes/insights.routes";
 import activityRoutes from "./routes/activity.routes";
 import calendarRoutes from "./routes/calendarRoutes";
-import financeRoutes from './routes/finance.routes';
 import dashboardRoutes from './routes/dashboard.routes';
 
 const app = express();
@@ -65,6 +65,7 @@ app.use('/api/admin', dashboardRoutes);
 app.use("/api/projects", projectRoutes);
 app.use("/api/projects", taskRoutes);
 app.use("/api/projects", budgetRoutes);
+app.use('/api/finance', financeRoutes);
 app.use("/api/projects", teamRoutes);
 app.use("/api/projects", overviewRoutes); 
 app.use("/api/projects", insightsRoutes); 
@@ -75,7 +76,6 @@ app.use("/api/tasks", commentRoutes);
 app.use("/api/tasks", activityLogRoutes);
 app.use("/api", uploadRoutes);
 app.use("/api", calendarRoutes);
-app.use('/api/admin', financeRoutes);
 
 // Error handling middleware
 app.use(
