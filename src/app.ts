@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+
 import authRoutes from './routes/auth.routes';
 import adminRoutes from './routes/admin.routes';
 import dashboardRoutes from './routes/dashboard.routes';
@@ -20,23 +21,29 @@ import activityRoutes from './routes/activity.routes';
 
 const app = express();
 
+// ✅ CORS Configuration (Correct)
 app.use(
   cors({
-    origin: true,        
+    origin: [
+      'https://fitness-manager-mockup.vercel.app',
+      'http://localhost:5173',
+      'http://localhost:3000',
+    ],
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   })
 );
 
 // 🔑 Handle preflight requests explicitly
 app.options('*', cors());
 
-
 app.use(express.json());
 
 // Serve static files for uploads
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
-
+// Health Check
 app.get('/', (_req, res) => {
   res.json({
     message: 'Fitout Manager API is running',
@@ -51,11 +58,13 @@ app.get('/health', (_req, res) => {
   });
 });
 
-
+// ===== Routes =====
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin', dashboardRoutes);
+
 app.use('/api/brands', brandRoutes);
+
 app.use('/api/projects', projectRoutes);
 app.use('/api/projects', taskRoutes);
 app.use('/api/projects', budgetRoutes);
@@ -64,26 +73,32 @@ app.use('/api/projects', overviewRoutes);
 app.use('/api/projects', insightsRoutes);
 app.use('/api/projects', activityRoutes);
 app.use('/api/projects', approvalRoutes);
+
 app.use('/api/documents', documentRoutes);
+
 app.use('/api/tasks', commentRoutes);
 app.use('/api/tasks', activityLogRoutes);
+
 app.use('/api', uploadRoutes);
 
+// ===== Error Handling =====
+app.use(
+  (
+    err: any,
+    _req: express.Request,
+    res: express.Response,
+    _next: express.NextFunction
+  ) => {
+    console.error('Error:', err);
 
-  err: any,
-  _req: express.Request,
-  res: express.Response,
-  _next: express.NextFunction
-) => {
-  console.error('Error:', err);
+    res.status(500).json({
+      message: 'Internal server error',
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined,
+    });
+  }
+);
 
-  res.status(500).json({
-    message: 'Internal server error',
-    error: process.env.NODE_ENV === 'development' ? err.message : undefined,
-  });
-});
-
-
+// ===== 404 Route =====
 app.use((_req, res) => {
   res.status(404).json({ message: 'Route not found' });
 });
