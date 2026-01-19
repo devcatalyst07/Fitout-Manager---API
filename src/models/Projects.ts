@@ -8,6 +8,7 @@ export interface IProject extends Document {
   projectCode?: string;
   description?: string;
   location?: string;
+  region?: string; // ← ADDED
   startDate?: Date;
   endDate?: Date;
   budget: number;
@@ -15,10 +16,9 @@ export interface IProject extends Document {
   status: 'Planning' | 'In Progress' | 'Completed' | 'On Hold';
   userId: mongoose.Types.ObjectId;
   createdBy: 'user' | 'admin';
-  region?: string; // ADD THIS
-  eacPolicyType?: string; // ADD THIS
-  eacFactor?: number; // ADD THIS
-  manualForecast?: number; // ADD THIS
+  eacPolicyType?: 'factor' | 'manual'; // ← ADDED
+  eacFactor?: number; // ← ADDED
+  manualForecast?: number; // ← ADDED
   createdAt: Date;
   updatedAt: Date;
 }
@@ -50,6 +50,10 @@ const ProjectSchema: Schema = new Schema(
     location: {
       type: String,
     },
+    region: { // ← ADDED
+      type: String,
+      default: 'Unassigned Region',
+    },
     startDate: {
       type: Date,
     },
@@ -79,17 +83,18 @@ const ProjectSchema: Schema = new Schema(
       enum: ['user', 'admin'],
       default: 'user',
     },
-    region: { // ADD THIS
+    eacPolicyType: { // ← ADDED
       type: String,
+      enum: ['factor', 'manual'],
+      default: 'factor',
     },
-    eacPolicyType: { // ADD THIS
-      type: String,
-    },
-    eacFactor: { // ADD THIS
+    eacFactor: { // ← ADDED
       type: Number,
+      default: 0.85, // 85% default forecast factor
     },
-    manualForecast: { // ADD THIS
+    manualForecast: { // ← ADDED
       type: Number,
+      default: 0,
     },
   },
   {
