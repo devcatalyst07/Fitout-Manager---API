@@ -3,11 +3,13 @@ import cors from 'cors';
 import path from 'path';
 import authRoutes from './routes/auth.routes';
 import adminRoutes from './routes/admin.routes';
+import dashboardRoutes from './routes/dashboard.routes'; // NEW
+import brandRoutes from './routes/brand.routes'; // NEW
 import projectRoutes from './routes/project.routes';
 import documentRoutes from './routes/document.routes';
-import taskRoutes from './routes/task.routes'; // NEW
-import budgetRoutes from './routes/budget.routes'; // NEW
-import teamRoutes from './routes/team.routes'; // NEW
+import taskRoutes from './routes/task.routes';
+import budgetRoutes from './routes/budget.routes';
+import teamRoutes from './routes/team.routes';
 import commentRoutes from "./routes/comment.routes";
 import activityLogRoutes from "./routes/activityLog.routes";
 import uploadRoutes from "./routes/upload.routes"; 
@@ -15,7 +17,6 @@ import overviewRoutes from "./routes/overview.routes";
 import approvalRoutes from "./routes/approval.routes";
 import insightsRoutes from "./routes/insights.routes";
 import activityRoutes from "./routes/activity.routes";
-import calendarRoutes from "./routes/calendarRoutes";
 
 const app = express();
 
@@ -40,6 +41,8 @@ app.get('/', (_, res) => {
     endpoints: {
       auth: '/api/auth/login',
       admin: '/api/admin/dashboard',
+      dashboard: '/api/admin/dashboard/stats',
+      brands: '/api/brands',
       projects: '/api/projects',
       documents: '/api/documents',
       tasks: '/api/projects/:projectId/tasks', 
@@ -57,19 +60,20 @@ app.get('/health', (_, res) => {
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/admin', dashboardRoutes); // NEW - Dashboard stats
+app.use('/api/brands', brandRoutes); // NEW - Brand management
 app.use('/api/projects', projectRoutes);
 app.use('/api/projects', taskRoutes); 
 app.use('/api/projects', budgetRoutes); 
 app.use('/api/projects', teamRoutes);
-app.use("/api/projects", overviewRoutes); // for project overview
-app.use("/api/projects", insightsRoutes); // for project insights
-app.use("/api/projects", activityRoutes); // for project activity logs
-app.use("/api/projects", approvalRoutes); // for approvals
+app.use("/api/projects", overviewRoutes);
+app.use("/api/projects", insightsRoutes);
+app.use("/api/projects", activityRoutes);
+app.use("/api/projects", approvalRoutes);
 app.use('/api/documents', documentRoutes);
 app.use("/api/tasks", commentRoutes);
 app.use("/api/tasks", activityLogRoutes);
-app.use("/api", uploadRoutes); // for file upoads
-app.use("/api", calendarRoutes);
+app.use("/api", uploadRoutes);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
