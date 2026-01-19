@@ -5,7 +5,7 @@ import Document from '../models/Document';
 import Project from '../models/Projects';
 import multer from 'multer';
 import { v2 as cloudinary } from 'cloudinary';
-import { CloudinaryStorage } from 'multer-storage-cloudinary';
+import { Readable } from 'stream';
 
 const router = Router();
 
@@ -16,27 +16,10 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// Configure Cloudinary storage for multer
-const storage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: async (req: any, file: any) => {
-    // Determine resource type based on file
-    const isPDF = file.mimetype === 'application/pdf';
-    const isImage = file.mimetype.startsWith('image/');
-    
-    return {
-      folder: 'fitout-documents',
-      resource_type: isPDF || !isImage ? 'raw' : 'auto', // Use 'raw' for PDFs and documents
-      access_mode: 'public',
-      format: file.originalname.split('.').pop(),
-      public_id: `${Date.now()}-${file.originalname.replace(/\.[^/.]+$/, '')}`,
-    };
-  },
-});
-
+// Multer memory storage
 const upload = multer({
-  storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
   fileFilter: (req, file, cb) => {
     const allowedMimeTypes = [
       'application/pdf',
@@ -57,6 +40,18 @@ const upload = multer({
   },
 });
 
+// Helper: Upload buffer to Cloudinary
+const uploadToCloudinary = (buffer: Buffer, options: any) => {
+  return new Promise<any>((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(options, (error, result) => {
+      if (error) return reject(error);
+      resolve(result);
+    });
+
+    Readable.from(buffer).pipe(uploadStream);
+  });
+};
+
 // GET all projects for dropdown (Admin only)
 router.get('/projects', authMiddleware, adminOnly, async (req, res) => {
   try {
@@ -66,11 +61,7 @@ router.get('/projects', authMiddleware, adminOnly, async (req, res) => {
 
     res.json(projects);
   } catch (error: any) {
-    console.error('Get projects error:', error);
-    res.status(500).json({ 
-      message: 'Failed to fetch projects',
-      error: error.message 
-    });
+    res.status(500).json({ message: 'Failed to fetch projects', error: error.message });
   }
 });
 
@@ -94,11 +85,7 @@ router.get('/folders', authMiddleware, adminOnly, async (req, res) => {
 
     res.json(foldersWithCount);
   } catch (error: any) {
-    console.error('Get folders error:', error);
-    res.status(500).json({ 
-      message: 'Failed to fetch document folders',
-      error: error.message 
-    });
+    res.status(500).json({ message: 'Failed to fetch document folders', error: error.message });
   }
 });
 
@@ -114,113 +101,54 @@ router.get('/project/:projectId', authMiddleware, adminOnly, async (req, res) =>
 
     res.json(documents);
   } catch (error: any) {
-    console.error('Get documents error:', error);
-    res.status(500).json({ 
-      message: 'Failed to fetch documents',
-      error: error.message 
-    });
+    res.status(500).json({ message: 'Failed to fetch documents', error: error.message });
   }
 });
 
 // POST upload document (Admin only)
-router.post('/upload', authMiddleware, adminOnly, (req: AuthRequest, res) => {
-  // Wrap multer upload in error handler
-  upload.single('file')(req, res, async (err) => {
-    if (err) {
-      console.error('Multer/Cloudinary error:', err);
-      return res.status(400).json({ 
-        message: err.message || 'File upload error',
-        error: err.toString()
-      });
+router.post('/upload', authMiddleware, adminOnly, upload.single('file'), async (req: AuthRequest, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded' });
     }
 
-    try {
-      console.log('=== UPLOAD DEBUG ===');
-      console.log('File:', req.file);
-      console.log('Body:', req.body);
-      console.log('User:', req.user);
-      console.log('===================');
+    const { projectId } = req.body;
+    if (!projectId) return res.status(400).json({ message: 'Project ID is required' });
 
-      if (!req.file) {
-        return res.status(400).json({ message: 'No file uploaded' });
-      }
+    const project = await Project.findById(projectId);
+    if (!project) return res.status(404).json({ message: 'Project not found' });
 
-      const { projectId } = req.body;
+    const userId = req.user?.id || req.user?.userId || req.user?._id;
+    if (!userId) return res.status(401).json({ message: 'User authentication error' });
 
-      if (!projectId) {
-        // Delete from Cloudinary if project ID is missing
-        if ((req.file as any).filename) {
-          await cloudinary.uploader.destroy((req.file as any).filename);
-        }
-        return res.status(400).json({ message: 'Project ID is required' });
-      }
+    const isPDF = req.file.mimetype === 'application/pdf';
+    const isImage = req.file.mimetype.startsWith('image/');
 
-      // Check if project exists
-      const project = await Project.findById(projectId);
-      if (!project) {
-        // Delete from Cloudinary if project doesn't exist
-        if ((req.file as any).filename) {
-          await cloudinary.uploader.destroy((req.file as any).filename);
-        }
-        return res.status(404).json({ message: 'Project not found' });
-      }
+    const cloudinaryResult = await uploadToCloudinary(req.file.buffer, {
+      folder: 'fitout-documents',
+      resource_type: isPDF || !isImage ? 'raw' : 'auto',
+      public_id: `${Date.now()}-${req.file.originalname.replace(/\.[^/.]+$/, '')}`,
+      format: req.file.originalname.split('.').pop()
+    });
 
-      // Get user ID - check both possible properties
-      const userId = req.user?.id || req.user?.userId || req.user?._id;
-      
-      if (!userId) {
-        // Delete from Cloudinary if user auth fails
-        if ((req.file as any).filename) {
-          await cloudinary.uploader.destroy((req.file as any).filename);
-        }
-        return res.status(401).json({ message: 'User authentication error' });
-      }
+    const newDocument = await Document.create({
+      fileName: req.file.originalname,
+      fileUrl: cloudinaryResult.secure_url,
+      fileSize: req.file.size,
+      fileType: req.file.mimetype,
+      projectId,
+      uploadedBy: userId,
+      cloudinaryPublicId: cloudinaryResult.public_id
+    });
 
-      console.log('Creating document with userId:', userId);
+    const populatedDocument = await Document.findById(newDocument._id)
+      .populate('uploadedBy', 'name email')
+      .populate('projectId', 'projectName');
 
-      // Cloudinary file info
-      const cloudinaryFile = req.file as any;
-
-      const newDocument = await Document.create({
-        fileName: req.file.originalname,
-        fileUrl: cloudinaryFile.path, // Cloudinary URL
-        fileSize: cloudinaryFile.size,
-        fileType: cloudinaryFile.mimetype,
-        projectId,
-        uploadedBy: userId,
-        cloudinaryPublicId: cloudinaryFile.filename, // Store for deletion later
-      });
-
-      const populatedDocument = await Document.findById(newDocument._id)
-        .populate('uploadedBy', 'name email')
-        .populate('projectId', 'projectName');
-
-      console.log('Document created successfully:', populatedDocument);
-
-      res.status(201).json({
-        message: 'Document uploaded successfully',
-        document: populatedDocument,
-      });
-    } catch (error: any) {
-      console.error('Upload document error:', error);
-      console.error('Error stack:', error.stack);
-      
-      // Clean up Cloudinary upload on error
-      if (req.file && (req.file as any).filename) {
-        try {
-          await cloudinary.uploader.destroy((req.file as any).filename);
-        } catch (deleteError) {
-          console.error('Failed to delete from Cloudinary:', deleteError);
-        }
-      }
-      
-      res.status(500).json({ 
-        message: 'Failed to upload document',
-        error: error.message,
-        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      });
-    }
-  });
+    res.status(201).json({ message: 'Document uploaded successfully', document: populatedDocument });
+  } catch (error: any) {
+    res.status(500).json({ message: 'Failed to upload', error: error.message });
+  }
 });
 
 // DELETE document (Admin only)
@@ -229,32 +157,19 @@ router.delete('/:id', authMiddleware, adminOnly, async (req, res) => {
     const { id } = req.params;
 
     const document = await Document.findById(id);
+    if (!document) return res.status(404).json({ message: 'Document not found' });
 
-    if (!document) {
-      return res.status(404).json({ message: 'Document not found' });
-    }
-
-    // Delete from Cloudinary using public_id
     if (document.cloudinaryPublicId) {
-      try {
-        await cloudinary.uploader.destroy(document.cloudinaryPublicId, {
-          resource_type: 'raw' // Use 'raw' for non-image files
-        });
-      } catch (cloudinaryError) {
-        console.error('Cloudinary deletion error:', cloudinaryError);
-        // Continue with database deletion even if Cloudinary fails
-      }
+      await cloudinary.uploader.destroy(document.cloudinaryPublicId, {
+        resource_type: 'raw'
+      });
     }
 
     await Document.findByIdAndDelete(id);
 
     res.json({ message: 'Document deleted successfully' });
   } catch (error: any) {
-    console.error('Delete document error:', error);
-    res.status(500).json({ 
-      message: 'Failed to delete document',
-      error: error.message 
-    });
+    res.status(500).json({ message: 'Failed to delete document', error: error.message });
   }
 });
 
@@ -263,21 +178,13 @@ router.get('/stats/overview', authMiddleware, adminOnly, async (req, res) => {
   try {
     const totalDocuments = await Document.countDocuments();
     const totalProjects = await Project.countDocuments();
-    
+
     const documents = await Document.find();
     const totalSize = documents.reduce((sum, doc) => sum + doc.fileSize, 0);
 
-    res.json({
-      totalDocuments,
-      totalProjects,
-      totalSize,
-    });
+    res.json({ totalDocuments, totalProjects, totalSize });
   } catch (error: any) {
-    console.error('Get stats error:', error);
-    res.status(500).json({ 
-      message: 'Failed to fetch statistics',
-      error: error.message 
-    });
+    res.status(500).json({ message: 'Failed to fetch statistics', error: error.message });
   }
 });
 

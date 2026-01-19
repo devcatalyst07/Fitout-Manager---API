@@ -28,27 +28,28 @@ const app = express();
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:3001',
+  'https://fitoutmanager.vercel.app',
+  'https://fitout-manager.vercel.app',
   'https://fitness-manager-mockup.vercel.app'
 ];
 
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps, Postman, curl)
+      if (!origin) return callback(null, true);
 
-  if (origin && allowedOrigins.includes(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  }
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
 
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
-  // Allow preflight requests
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
-
-  next();
-});
+      callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true, // Allow cookies
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+  })
+);
 
 // ============================================
 // Middleware
@@ -66,18 +67,7 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 app.get('/', (_, res) => {
   res.json({
     message: 'Fitout Manager API is running',
-    status: 'online',
-    endpoints: {
-      auth: '/api/auth/login',
-      admin: '/api/admin/dashboard',
-      dashboard: '/api/admin/dashboard/stats',
-      brands: '/api/brands',
-      projects: '/api/projects',
-      documents: '/api/documents',
-      tasks: '/api/projects/:projectId/tasks',
-      budget: '/api/projects/:projectId/budget',
-      team: '/api/projects/:projectId/team'
-    }
+    status: 'online'
   });
 });
 
