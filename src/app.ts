@@ -4,7 +4,7 @@ import path from 'path';
 import authRoutes from './routes/auth.routes';
 import adminRoutes from './routes/admin.routes';
 import dashboardRoutes from './routes/dashboard.routes';
-import brandRoutes from './routes/brand.routes';
+import brandRoutes from './routes/brand.routes'; 
 import projectRoutes from './routes/project.routes';
 import documentRoutes from './routes/document.routes';
 import taskRoutes from './routes/task.routes';
@@ -20,36 +20,18 @@ import activityRoutes from "./routes/activity.routes";
 
 const app = express();
 
-// ============================================
-// CORS CONFIGURATION - TEMPORARY PERMISSIVE VERSION
-// ============================================
-
-console.log('🔒 CORS enabled for all origins (development mode)');
-
+// Enhanced CORS configuration
 app.use(cors({
-  origin: true, // Allow all origins temporarily
+  origin: '*',
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  exposedHeaders: ['Content-Range', 'X-Content-Range'],
-  maxAge: 86400
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
-
-// Handle preflight OPTIONS requests
-app.options('*', cors());
-
-// ============================================
-// MIDDLEWARE
-// ============================================
 
 app.use(express.json());
 
 // Serve static files for uploads
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
-
-// ============================================
-// ROOT & HEALTH CHECK ENDPOINTS
-// ============================================
 
 // Root endpoint with more details
 app.get('/', (_, res) => {
@@ -75,14 +57,11 @@ app.get('/health', (_, res) => {
   res.json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
-// ============================================
-// API ROUTES
-// ============================================
-
+// Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin', dashboardRoutes);
-app.use('/api/brands', brandRoutes);
+app.use('/api/brands', brandRoutes); 
 app.use('/api/projects', projectRoutes);
 app.use('/api/projects', taskRoutes); 
 app.use('/api/projects', budgetRoutes); 
@@ -96,13 +75,9 @@ app.use("/api/tasks", commentRoutes);
 app.use("/api/tasks", activityLogRoutes);
 app.use("/api", uploadRoutes);
 
-// ============================================
-// ERROR HANDLING
-// ============================================
-
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error('❌ Error:', err);
+  console.error('Error:', err);
   res.status(500).json({ 
     message: 'Internal server error',
     error: process.env.NODE_ENV === 'development' ? err.message : undefined
