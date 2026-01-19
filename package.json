@@ -2,16 +2,22 @@
   "name": "fitout-manager-api",
   "version": "1.0.0",
   "main": "dist/server.js",
+  "engines": {
+    "node": "18.x"
+  },
   "scripts": {
     "dev": "ts-node src/server.ts",
     "build": "tsc",
     "postinstall": "npm run build",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "vercel-build": "npm run build",
+    "type-check": "tsc --noEmit"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "cloudinary": "^2.9.0",
     "cors": "^2.8.5",
+    "date-fns": "^3.0.0",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "jsonwebtoken": "^9.0.2",
@@ -26,6 +32,7 @@
     "@types/mongoose": "^5.11.96",
     "@types/multer": "^2.0.0",
     "@types/node": "^20.9.0",
+    "@vercel/node": "^3.0.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   }
