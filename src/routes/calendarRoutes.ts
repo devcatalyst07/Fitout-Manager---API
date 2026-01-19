@@ -3,7 +3,7 @@ import CalendarEvent from "../models/CalendarEvent";
 import { authMiddleware } from "../middleware/auth";
 
 const router = express.Router();
-
+// ito yung bago kagabi ko na push
 // Get all events for a project
 router.get(
   "/projects/:projectId/events",
