@@ -11,14 +11,19 @@ const router = Router();
 // GET dashboard statistics
 router.get('/dashboard/stats', authMiddleware, adminOnly, async (req, res) => {
   try {
+    console.log('=== Dashboard Stats Request Started ===');
+    
     // Get all projects
     const projects = await Project.find().populate('userId', 'name email');
+    console.log(`Found ${projects.length} projects`);
     
     // Get all tasks
     const tasks = await Task.find();
+    console.log(`Found ${tasks.length} total tasks`);
     
     // Get all budget items
     const budgetItems = await BudgetItem.find();
+    console.log(`Found ${budgetItems.length} total budget items`);
 
     // Calculate project stats
     const totalProjects = projects.length;
@@ -45,21 +50,68 @@ router.get('/dashboard/stats', authMiddleware, adminOnly, async (req, res) => {
     ).length;
     const activeChange = activeProjects - activeLastWeek;
 
-    // Get active tasks grouped by project
-    const activeTasks = await Task.find({ status: { $ne: 'Done' } })
-      .populate('projectId', 'projectName brand')
-      .sort({ dueDate: 1 })
-      .limit(10);
-
-    // Get budget items grouped by project (high priority items)
-    const budgetTasks = await BudgetItem.find({ 
-      committedStatus: { $in: ['Planned', 'Committed'] } 
+    // Get active tasks (NOT Done) - FIXED
+    console.log('Fetching active tasks...');
+    const activeTasksQuery = await Task.find({ 
+      status: { $in: ['Backlog', 'In Progress', 'Blocked'] } 
     })
-      .populate('projectId', 'projectName brand')
+      .populate({
+        path: 'projectId',
+        select: 'projectName brand',
+        model: 'Project'
+      })
+      .sort({ dueDate: 1 })
+      .limit(10)
+      .lean();
+
+    console.log(`Found ${activeTasksQuery.length} active tasks before filtering`);
+    
+    // Filter out any tasks where projectId didn't populate
+    const activeTasks = activeTasksQuery.filter(task => {
+      const isValid = task.projectId && typeof task.projectId === 'object';
+      if (!isValid) {
+        console.log(`Filtered out task ${task._id} - projectId not populated`);
+      }
+      return isValid;
+    });
+    
+    console.log(`Valid active tasks after filtering: ${activeTasks.length}`);
+
+    // Get budget items for ALL projects (including active ones)
+    console.log('Fetching budget items...');
+    const activeProjectIds = projects
+      .filter(p => p.status !== 'Completed')
+      .map(p => p._id);
+    
+    console.log(`Active project IDs count: ${activeProjectIds.length}`);
+
+    const budgetTasksQuery = await BudgetItem.find({ 
+      projectId: { $in: activeProjectIds }
+    })
+      .populate({
+        path: 'projectId',
+        select: 'projectName brand',
+        model: 'Project'
+      })
       .sort({ createdAt: -1 })
-      .limit(10);
+      .limit(10)
+      .lean();
+
+    console.log(`Found ${budgetTasksQuery.length} budget items before filtering`);
+
+    // Filter out any budget items where projectId didn't populate
+    const budgetTasks = budgetTasksQuery.filter(item => {
+      const isValid = item.projectId && typeof item.projectId === 'object';
+      if (!isValid) {
+        console.log(`Filtered out budget item ${item._id} - projectId not populated`);
+      }
+      return isValid;
+    });
+
+    console.log(`Valid budget items after filtering: ${budgetTasks.length}`);
 
     // Project analytics data
+    console.log('Calculating project analytics...');
     const projectAnalytics = await Promise.all(
       projects.map(async (project) => {
         const projectTasks = await Task.find({ projectId: project._id });
@@ -95,8 +147,13 @@ router.get('/dashboard/stats', authMiddleware, adminOnly, async (req, res) => {
       })
     );
 
+    console.log(`Generated analytics for ${projectAnalytics.length} projects`);
+
     // Brand analytics
+    console.log('Calculating brand analytics...');
     const brands = await Brand.find({ isActive: true });
+    console.log(`Found ${brands.length} active brands`);
+    
     const brandAnalytics = await Promise.all(
       brands.map(async (brand) => {
         const brandProjects = projects.filter(p => p.brand === brand.name);
@@ -135,6 +192,9 @@ router.get('/dashboard/stats', authMiddleware, adminOnly, async (req, res) => {
       })
     );
 
+    console.log(`Generated analytics for ${brandAnalytics.length} brands`);
+    console.log('=== Dashboard Stats Request Completed ===');
+
     res.json({
       projectStats: {
         totalProjects,
@@ -152,7 +212,7 @@ router.get('/dashboard/stats', authMiddleware, adminOnly, async (req, res) => {
     });
   } catch (error) {
     console.error('Get dashboard stats error:', error);
-    res.status(500).json({ message: 'Failed to fetch dashboard statistics' });
+    res.status(500).json({ message: 'Failed to fetch dashboard statistics', error: error instanceof Error ? error.message : 'Unknown error' });
   }
 });
 

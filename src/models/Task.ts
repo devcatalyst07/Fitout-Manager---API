@@ -1,16 +1,11 @@
-import mongoose, { Schema, Document } from 'mongoose';
-
-export interface IAssignee {
-  email: string;
-  name: string;
-}
+import mongoose, { Document, Schema } from 'mongoose';
 
 export interface ITask extends Document {
   title: string;
   description?: string;
-  status: "Backlog" | "In Progress" | "Blocked" | "Done";
-  priority: "Low" | "Medium" | "High" | "Critical";
-  assignees: IAssignee[];
+  status: 'Backlog' | 'In Progress' | 'Blocked' | 'Done';
+  priority: 'Low' | 'Medium' | 'High' | 'Critical';
+  assignees: { email: string; name: string }[];
   startDate?: Date;
   dueDate?: Date;
   progress: number;
@@ -21,43 +16,31 @@ export interface ITask extends Document {
   updatedAt: Date;
 }
 
-const TaskSchema: Schema = new Schema(
+const taskSchema = new Schema<ITask>(
   {
     title: {
       type: String,
       required: true,
+      trim: true,
     },
     description: {
       type: String,
+      trim: true,
     },
     status: {
       type: String,
-      enum: ["Backlog", "In Progress", "Blocked", "Done"],
-      default: "Backlog",
+      enum: ['Backlog', 'In Progress', 'Blocked', 'Done'],
+      default: 'Backlog',
     },
     priority: {
       type: String,
-      enum: ["Low", "Medium", "High", "Critical"],
-      default: "Medium",
+      enum: ['Low', 'Medium', 'High', 'Critical'],
+      default: 'Medium',
     },
-    // assigneeEmail: {
-    //   type: String,
-    //   required: true,
-    // },
-    // assigneeName: {
-    //   type: String,
-    //   required: true,
-    // },
     assignees: [
       {
-        email: {
-          type: String,
-          required: true,
-        },
-        name: {
-          type: String,
-          required: true,
-        },
+        email: { type: String, required: true },
+        name: { type: String, required: true },
       },
     ],
     startDate: {
@@ -74,15 +57,16 @@ const TaskSchema: Schema = new Schema(
     },
     estimateHours: {
       type: Number,
+      min: 0,
     },
     projectId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Project",
+      type: Schema.Types.ObjectId,
+      ref: 'Project',
       required: true,
     },
     createdBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
+      type: Schema.Types.ObjectId,
+      ref: 'User',
       required: true,
     },
   },
@@ -91,4 +75,6 @@ const TaskSchema: Schema = new Schema(
   }
 );
 
-export default mongoose.model<ITask>('Task', TaskSchema);
+const Task = mongoose.model<ITask>('Task', taskSchema);
+
+export default Task;

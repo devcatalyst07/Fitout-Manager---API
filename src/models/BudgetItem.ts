@@ -1,4 +1,4 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import mongoose, { Document, Schema } from 'mongoose';
 
 export interface IBudgetItem extends Document {
   description: string;
@@ -13,25 +13,29 @@ export interface IBudgetItem extends Document {
   updatedAt: Date;
 }
 
-const BudgetItemSchema: Schema = new Schema(
+const budgetItemSchema = new Schema<IBudgetItem>(
   {
     description: {
       type: String,
       required: true,
+      trim: true,
     },
     vendor: {
       type: String,
       required: true,
+      trim: true,
     },
     quantity: {
       type: Number,
       required: true,
       default: 1,
+      min: 1,
     },
     unitCost: {
       type: Number,
       required: true,
       default: 0,
+      min: 0,
     },
     committedStatus: {
       type: String,
@@ -44,12 +48,12 @@ const BudgetItemSchema: Schema = new Schema(
       enum: ['Design', 'Approvals', 'Construction', 'Joinery', 'MEP', 'Fixtures', 'Contingency', 'Misc'],
     },
     projectId: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: Schema.Types.ObjectId,
       ref: 'Project',
       required: true,
     },
     createdBy: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: Schema.Types.ObjectId,
       ref: 'User',
       required: true,
     },
@@ -59,4 +63,6 @@ const BudgetItemSchema: Schema = new Schema(
   }
 );
 
-export default mongoose.model<IBudgetItem>('BudgetItem', BudgetItemSchema);
+const BudgetItem = mongoose.model<IBudgetItem>('BudgetItem', budgetItemSchema);
+
+export default BudgetItem;
