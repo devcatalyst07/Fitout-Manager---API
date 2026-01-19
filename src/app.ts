@@ -1,85 +1,79 @@
-import express from 'express';
-import cors from 'cors';
-import path from 'path';
-
-import authRoutes from './routes/auth.routes';
-import adminRoutes from './routes/admin.routes';
-import dashboardRoutes from './routes/dashboard.routes';
-import brandRoutes from './routes/brand.routes';
-import projectRoutes from './routes/project.routes';
-import documentRoutes from './routes/document.routes';
-import taskRoutes from './routes/task.routes';
-import budgetRoutes from './routes/budget.routes';
-import teamRoutes from './routes/team.routes';
-import commentRoutes from './routes/comment.routes';
-import activityLogRoutes from './routes/activityLog.routes';
-import uploadRoutes from './routes/upload.routes';
-import overviewRoutes from './routes/overview.routes';
-import approvalRoutes from './routes/approval.routes';
-import insightsRoutes from './routes/insights.routes';
-import activityRoutes from './routes/activity.routes';
+import express from "express";
+import cors from "cors";
+import path from "path";
+import authRoutes from "./routes/auth.routes";
+import adminRoutes from "./routes/admin.routes";
+import projectRoutes from "./routes/project.routes";
+import documentRoutes from "./routes/document.routes";
+import taskRoutes from "./routes/task.routes"; // NEW
+import budgetRoutes from "./routes/budget.routes"; // NEW
+import teamRoutes from "./routes/team.routes"; // NEW
+import commentRoutes from "./routes/comment.routes";
+import activityLogRoutes from "./routes/activityLog.routes";
+import uploadRoutes from "./routes/upload.routes";
+import overviewRoutes from "./routes/overview.routes";
+import approvalRoutes from "./routes/approval.routes";
+import insightsRoutes from "./routes/insights.routes";
+import activityRoutes from "./routes/activity.routes";
 import calendarRoutes from "./routes/calendarRoutes";
 
 const app = express();
 
-// ✅ CORS Configuration (Correct)
+
 app.use(
   cors({
-    origin: [
-      'https://fitness-manager-mockup.vercel.app',
-      'http://localhost:5173',
-      'http://localhost:3000',
-    ],
+    origin: "*",
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-  })
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
 );
-
-// 🔑 Handle preflight requests explicitly
-app.options('*', cors());
 
 app.use(express.json());
 
-// Serve static files for uploads
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
-// Health Check
-app.get('/', (_req, res) => {
+app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
+
+
+app.get("/", (_, res) => {
   res.json({
-    message: 'Fitout Manager API is running',
-    status: 'online',
+    message: "Fitout Manager API is running",
+    status: "online",
+    endpoints: {
+      auth: "/api/auth/login",
+      admin: "/api/admin/dashboard",
+      projects: "/api/projects",
+      documents: "/api/documents",
+      tasks: "/api/projects/:projectId/tasks",
+      budget: "/api/projects/:projectId/budget",
+      team: "/api/projects/:projectId/team",
+    },
   });
 });
 
-app.get('/health', (_req, res) => {
-  res.json({
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-  });
+
+app.get("/health", (_, res) => {
+  res.json({ status: "healthy", timestamp: new Date().toISOString() });
 });
 
-// ===== Routes =====
-app.use('/api/auth', authRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/admin', dashboardRoutes);
-
-app.use('/api/brands', brandRoutes);
-
-app.use('/api/projects', projectRoutes);
-app.use('/api/projects', taskRoutes);
-app.use('/api/projects', budgetRoutes);
-app.use('/api/projects', teamRoutes);
+// Routes
+app.use("/api/auth", authRoutes);
+app.use("/api/admin", adminRoutes);
+app.use("/api/projects", projectRoutes);
+app.use("/api/projects", taskRoutes);
+app.use("/api/projects", budgetRoutes);
+app.use("/api/projects", teamRoutes);
 app.use("/api/projects", overviewRoutes); 
 app.use("/api/projects", insightsRoutes); 
-app.use("/api/projects", activityRoutes); 
-app.use("/api/projects", approvalRoutes); 
-app.use('/api/documents', documentRoutes);
+app.use("/api/projects", activityRoutes);
+app.use("/api/projects", approvalRoutes);
+app.use("/api/documents", documentRoutes);
 app.use("/api/tasks", commentRoutes);
 app.use("/api/tasks", activityLogRoutes);
-app.use("/api", uploadRoutes); 
+app.use("/api", uploadRoutes);
 app.use("/api", calendarRoutes);
 
+// Error handling middleware
 app.use(
   (
     err: any,
@@ -95,10 +89,9 @@ app.use(
   },
 );
 
-
-// ===== 404 Route =====
-app.use((_req, res) => {
-  res.status(404).json({ message: 'Route not found' });
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({ message: "Route not found" });
 });
 
 export default app;
