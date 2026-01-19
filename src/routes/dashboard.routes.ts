@@ -18,6 +18,11 @@ router.get('/dashboard/stats', authMiddleware, adminOnly, async (req, res) => {
     const projects = await Project.find().populate('userId', 'name email');
     console.log(`Found ${projects.length} projects`);
     
+    // Debug: Log project details
+    projects.forEach(p => {
+      console.log(`Project: ${p.projectName}, Status: ${p.status}, ID: ${p._id}`);
+    });
+    
     // Calculate project stats
     const totalProjects = projects.length;
     const activeProjects = projects.filter(p => p.status === 'In Progress').length;
@@ -52,6 +57,14 @@ router.get('/dashboard/stats', authMiddleware, adminOnly, async (req, res) => {
       .map(p => p._id);
 
     console.log(`Active project IDs count: ${activeProjectIds.length}`);
+    console.log('Active project IDs:', activeProjectIds.map(id => id.toString()));
+
+    // First, check ALL tasks regardless of project
+    const allTasksCheck = await Task.find().lean();
+    console.log(`Total tasks in database: ${allTasksCheck.length}`);
+    allTasksCheck.forEach(t => {
+      console.log(`Task: ${t.title}, Status: ${t.status}, ProjectID: ${t.projectId}`);
+    });
 
     // Query tasks directly with projectId filter
     const activeTasks = await Task.find({ 
@@ -62,7 +75,7 @@ router.get('/dashboard/stats', authMiddleware, adminOnly, async (req, res) => {
     .limit(10)
     .lean(); // Use lean() for better performance
 
-    console.log(`Found ${activeTasks.length} active tasks from database`);
+    console.log(`Found ${activeTasks.length} active tasks from database query`);
 
     // Manually populate project data
     const activeTasksPopulated = activeTasks.map(task => {
@@ -87,6 +100,13 @@ router.get('/dashboard/stats', authMiddleware, adminOnly, async (req, res) => {
     // ========== BUDGET ITEMS - FIXED APPROACH ==========
     console.log('Fetching budget items...');
 
+    // First, check ALL budget items
+    const allBudgetCheck = await BudgetItem.find().lean();
+    console.log(`Total budget items in database: ${allBudgetCheck.length}`);
+    allBudgetCheck.forEach(b => {
+      console.log(`Budget: ${b.description}, Status: ${b.committedStatus}, ProjectID: ${b.projectId}`);
+    });
+
     // Query budget items directly with projectId filter
     const budgetItems = await BudgetItem.find({ 
       projectId: { $in: activeProjectIds }
@@ -95,7 +115,7 @@ router.get('/dashboard/stats', authMiddleware, adminOnly, async (req, res) => {
     .limit(10)
     .lean();
 
-    console.log(`Found ${budgetItems.length} budget items from database`);
+    console.log(`Found ${budgetItems.length} budget items from database query`);
 
     // Manually populate project data
     const budgetTasksPopulated = budgetItems.map(item => {

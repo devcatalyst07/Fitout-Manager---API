@@ -10,5 +10,6 @@
     "moduleResolution": "node",
     "allowJs": true,
     "forceConsistentCasingInFileNames": true
-  }
+  },
+  "include": ["src"]
 }
