@@ -1,7 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
-
 import authRoutes from './routes/auth.routes';
 import adminRoutes from './routes/admin.routes';
 import dashboardRoutes from './routes/dashboard.routes';
@@ -21,12 +20,9 @@ import activityRoutes from './routes/activity.routes';
 
 const app = express();
 
-// ==================================================
-// ✅ CORS — MUST BE FIRST (Vercel + Localhost safe)
-// ==================================================
 app.use(
   cors({
-    origin: true,        // allow localhost + any vercel.app
+    origin: true,        
     credentials: true,
   })
 );
@@ -34,17 +30,13 @@ app.use(
 // 🔑 Handle preflight requests explicitly
 app.options('*', cors());
 
-// ==================================================
-// Middleware
-// ==================================================
+
 app.use(express.json());
 
 // Serve static files for uploads
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
-// ==================================================
-// Root & Health Endpoints
-// ==================================================
+
 app.get('/', (_req, res) => {
   res.json({
     message: 'Fitout Manager API is running',
@@ -59,15 +51,11 @@ app.get('/health', (_req, res) => {
   });
 });
 
-// ==================================================
-// API Routes
-// ==================================================
+
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin', dashboardRoutes);
-
 app.use('/api/brands', brandRoutes);
-
 app.use('/api/projects', projectRoutes);
 app.use('/api/projects', taskRoutes);
 app.use('/api/projects', budgetRoutes);
@@ -76,18 +64,12 @@ app.use('/api/projects', overviewRoutes);
 app.use('/api/projects', insightsRoutes);
 app.use('/api/projects', activityRoutes);
 app.use('/api/projects', approvalRoutes);
-
 app.use('/api/documents', documentRoutes);
-
 app.use('/api/tasks', commentRoutes);
 app.use('/api/tasks', activityLogRoutes);
-
 app.use('/api', uploadRoutes);
 
-// ==================================================
-// Error Handling
-// ==================================================
-app.use((
+
   err: any,
   _req: express.Request,
   res: express.Response,
@@ -101,9 +83,7 @@ app.use((
   });
 });
 
-// ==================================================
-// 404 Handler
-// ==================================================
+
 app.use((_req, res) => {
   res.status(404).json({ message: 'Route not found' });
 });
