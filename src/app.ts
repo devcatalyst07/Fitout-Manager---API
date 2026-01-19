@@ -20,46 +20,36 @@ import activityRoutes from "./routes/activity.routes";
 
 const app = express();
 
-// Get allowed origins from environment variable or use defaults
-const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [
-  'http://localhost:3000',
-  'http://localhost:3001',
-  'https://your-frontend.vercel.app' // Replace with your actual frontend URL
-];
+// ============================================
+// CORS CONFIGURATION - TEMPORARY PERMISSIVE VERSION
+// ============================================
 
-console.log('CORS enabled for origins:', allowedOrigins);
+console.log('🔒 CORS enabled for all origins (development mode)');
 
 app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps, Postman, curl)
-    if (!origin) {
-      console.log('Request with no origin allowed');
-      return callback(null, true);
-    }
-    
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      console.log('CORS allowed for:', origin);
-      callback(null, true);
-    } else {
-      console.log('CORS blocked for:', origin);
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: true, // Allow all origins temporarily
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   exposedHeaders: ['Content-Range', 'X-Content-Range'],
-  maxAge: 86400 // 24 hours
+  maxAge: 86400
 }));
 
 // Handle preflight OPTIONS requests
 app.options('*', cors());
+
+// ============================================
+// MIDDLEWARE
+// ============================================
 
 app.use(express.json());
 
 // Serve static files for uploads
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
+// ============================================
+// ROOT & HEALTH CHECK ENDPOINTS
+// ============================================
 
 // Root endpoint with more details
 app.get('/', (_, res) => {
@@ -85,7 +75,9 @@ app.get('/health', (_, res) => {
   res.json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
-// API Routes
+// ============================================
+// API ROUTES
+// ============================================
 
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
@@ -104,6 +96,9 @@ app.use("/api/tasks", commentRoutes);
 app.use("/api/tasks", activityLogRoutes);
 app.use("/api", uploadRoutes);
 
+// ============================================
+// ERROR HANDLING
+// ============================================
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
