@@ -24,7 +24,7 @@ router.get('/finance/overview', authMiddleware, adminOnly, async (req, res) => {
       projectFilter.region = region;
     }
 
-    // Get filtered projects
+    // Get filtered projects!
     const projects = await Project.find(projectFilter).populate('userId', 'name email');
     console.log('Projects found:', projects.length); // ADD LOGGING
 
