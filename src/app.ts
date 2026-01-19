@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+
 import authRoutes from './routes/auth.routes';
 import adminRoutes from './routes/admin.routes';
 import dashboardRoutes from './routes/dashboard.routes';
@@ -21,7 +22,7 @@ import activityRoutes from "./routes/activity.routes";
 const app = express();
 
 // ============================================
-// CORS Configuration
+// CORS Configuration (LOCAL + LIVE)
 // ============================================
 
 const allowedOrigins = [
@@ -30,15 +31,24 @@ const allowedOrigins = [
   'https://fitness-manager-mockup.vercel.app'
 ];
 
-app.use(cors({
-  origin: allowedOrigins,
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
 
-// Handle preflight requests
-app.options('*', cors());
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+  // Allow preflight requests
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+
+  next();
+});
 
 // ============================================
 // Middleware
@@ -53,9 +63,8 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 // Root & Health Endpoints
 // ============================================
 
-// Root endpoint with more details
 app.get('/', (_, res) => {
-  res.json({ 
+  res.json({
     message: 'Fitout Manager API is running',
     status: 'online',
     endpoints: {
@@ -65,14 +74,13 @@ app.get('/', (_, res) => {
       brands: '/api/brands',
       projects: '/api/projects',
       documents: '/api/documents',
-      tasks: '/api/projects/:projectId/tasks', 
-      budget: '/api/projects/:projectId/budget', 
-      team: '/api/projects/:projectId/team' 
+      tasks: '/api/projects/:projectId/tasks',
+      budget: '/api/projects/:projectId/budget',
+      team: '/api/projects/:projectId/team'
     }
   });
 });
 
-// Health check endpoint
 app.get('/health', (_, res) => {
   res.json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
@@ -86,26 +94,25 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/admin', dashboardRoutes);
 app.use('/api/brands', brandRoutes);
 app.use('/api/projects', projectRoutes);
-app.use('/api/projects', taskRoutes); 
-app.use('/api/projects', budgetRoutes); 
+app.use('/api/projects', taskRoutes);
+app.use('/api/projects', budgetRoutes);
 app.use('/api/projects', teamRoutes);
-app.use("/api/projects", overviewRoutes);
-app.use("/api/projects", insightsRoutes);
-app.use("/api/projects", activityRoutes);
-app.use("/api/projects", approvalRoutes);
+app.use('/api/projects', overviewRoutes);
+app.use('/api/projects', insightsRoutes);
+app.use('/api/projects', activityRoutes);
+app.use('/api/projects', approvalRoutes);
 app.use('/api/documents', documentRoutes);
-app.use("/api/tasks", commentRoutes);
-app.use("/api/tasks", activityLogRoutes);
-app.use("/api", uploadRoutes);
+app.use('/api/tasks', commentRoutes);
+app.use('/api/tasks', activityLogRoutes);
+app.use('/api', uploadRoutes);
 
 // ============================================
 // Error Handling
 // ============================================
 
-// Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error('Error:', err);
-  res.status(500).json({ 
+  res.status(500).json({
     message: 'Internal server error',
     error: process.env.NODE_ENV === 'development' ? err.message : undefined
   });
