@@ -3,8 +3,8 @@ import cors from 'cors';
 import path from 'path';
 import authRoutes from './routes/auth.routes';
 import adminRoutes from './routes/admin.routes';
-import dashboardRoutes from './routes/dashboard.routes'; // NEW
-import brandRoutes from './routes/brand.routes'; // NEW
+import dashboardRoutes from './routes/dashboard.routes';
+import brandRoutes from './routes/brand.routes';
 import projectRoutes from './routes/project.routes';
 import documentRoutes from './routes/document.routes';
 import taskRoutes from './routes/task.routes';
@@ -20,18 +20,38 @@ import activityRoutes from "./routes/activity.routes";
 
 const app = express();
 
-// Enhanced CORS configuration
+// ============================================
+// CORS Configuration
+// ============================================
+
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'https://fitness-manager-mockup.vercel.app'
+];
+
 app.use(cors({
-  origin: '*',
+  origin: allowedOrigins,
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
+
+// Handle preflight requests
+app.options('*', cors());
+
+// ============================================
+// Middleware
+// ============================================
 
 app.use(express.json());
 
 // Serve static files for uploads
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
+// ============================================
+// Root & Health Endpoints
+// ============================================
 
 // Root endpoint with more details
 app.get('/', (_, res) => {
@@ -57,11 +77,14 @@ app.get('/health', (_, res) => {
   res.json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
-// Routes
+// ============================================
+// API Routes
+// ============================================
+
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/api/admin', dashboardRoutes); // NEW - Dashboard stats
-app.use('/api/brands', brandRoutes); // NEW - Brand management
+app.use('/api/admin', dashboardRoutes);
+app.use('/api/brands', brandRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/projects', taskRoutes); 
 app.use('/api/projects', budgetRoutes); 
@@ -74,6 +97,10 @@ app.use('/api/documents', documentRoutes);
 app.use("/api/tasks", commentRoutes);
 app.use("/api/tasks", activityLogRoutes);
 app.use("/api", uploadRoutes);
+
+// ============================================
+// Error Handling
+// ============================================
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
