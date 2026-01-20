@@ -47,9 +47,8 @@ router.get("/:id/dashboard", authMiddleware, async (req, res) => {
     }
 
     // 2. Get all projects for this brand
-    const projects = await Project.find({ brandId: id })
-      .populate("createdBy", "name email")
-      .populate("assignedTo", "name email")
+    const projects = await Project.find({ brand: brand.name })
+      .populate("userId", "name email")
       .sort({ createdAt: -1 });
 
     // 3. Mock analytics data (replace with real data later)
