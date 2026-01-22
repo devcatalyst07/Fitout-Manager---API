@@ -3,6 +3,7 @@ import { authMiddleware, AuthRequest } from "../middleware/auth";
 import { adminOnly } from "../middleware/role";
 import Brand from "../models/Brand";
 import Project from "../models/Projects";
+import Task from "../models/Task";
 
 const router = Router();
 
@@ -34,32 +35,52 @@ router.get("/all", authMiddleware, adminOnly, async (req, res) => {
   }
 });
 
-// GET brand dashboard data - NEW ROUTE!
+// GET brand dashboard data WITH TASK COMPLETION
 router.get("/:id/dashboard", authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
 
-    // 1. Get brand details
     const brand = await Brand.findById(id).populate("createdBy", "name email");
 
     if (!brand) {
       return res.status(404).json({ message: "Brand not found" });
     }
 
-    // 2. Get all projects for this brand
+    // Get all projects for this brand
     const projects = await Project.find({ brand: brand.name })
       .populate("userId", "name email")
       .sort({ createdAt: -1 });
 
-    // 3. Mock analytics data (replace with real data later)
-    const analytics = {
-      months: ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
-      revenue: [30000, 35000, 32000, 40000, 38000, 45000],
-      expenses: [20000, 22000, 21000, 25000, 24000, 28000],
-      profit: [10000, 13000, 11000, 15000, 14000, 17000],
-    };
+    // For each project, calculate completion based on tasks
+    const projectsWithCompletion = await Promise.all(
+      projects.map(async (project) => {
+        // Get all tasks for this project
+        const tasks = await Task.find({ projectId: project._id });
 
-    // 4. Return all data
+        let completionPercent = 0;
+
+        if (tasks.length > 0) {
+          // Calculate average completion of all tasks
+          const totalProgress = tasks.reduce(
+            (sum, task) => sum + (task.progress || 0),
+            0,
+          );
+          completionPercent = totalProgress / tasks.length;
+        }
+
+        return {
+          _id: project._id,
+          projectName: project.projectName,
+          status: project.status,
+          budget: project.budget,
+          spent: project.spent || 0,
+          completionPercent: Math.round(completionPercent), // Round to whole number
+          taskCount: tasks.length,
+          createdAt: project.createdAt,
+        };
+      }),
+    );
+
     res.json({
       brand: {
         _id: brand._id,
@@ -70,18 +91,71 @@ router.get("/:id/dashboard", authMiddleware, async (req, res) => {
         createdAt: brand.createdAt,
         updatedAt: brand.updatedAt,
       },
-      projects: projects.map((p) => ({
-        _id: p._id,
-        projectName: p.projectName,
-        status: p.status,
-        budget: p.budget,
-        createdAt: p.createdAt,
-      })),
-      analytics,
+      projects: projectsWithCompletion,
     });
   } catch (error) {
     console.error("Dashboard fetch error:", error);
     res.status(500).json({ message: "Failed to load dashboard data" });
+  }
+});
+
+// GET brand team members
+router.get("/:id/team", authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const brand = await Brand.findById(id);
+    if (!brand) {
+      return res.status(404).json({ message: "Brand not found" });
+    }
+
+    const teamMembers = brand.teamMembers || [];
+    res.json(teamMembers);
+  } catch (error) {
+    console.error("Get brand team error:", error);
+    res.status(500).json({ message: "Failed to fetch team members" });
+  }
+});
+
+// ADD team member to brand
+router.post("/:id/team", authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, email } = req.body;
+
+    if (!name || !email) {
+      return res.status(400).json({ message: "Name and email are required" });
+    }
+
+    const brand = await Brand.findById(id);
+    if (!brand) {
+      return res.status(404).json({ message: "Brand not found" });
+    }
+
+    const teamMembers = brand.teamMembers || [];
+    const exists = teamMembers.some((member: any) => member.email === email);
+
+    if (exists) {
+      return res.status(400).json({ message: "User already in team" });
+    }
+
+    const newMember = {
+      _id: new Date().getTime().toString(),
+      name,
+      email,
+    };
+
+    teamMembers.push(newMember);
+    brand.teamMembers = teamMembers;
+    await brand.save();
+
+    res.status(201).json({
+      message: "Team member added successfully",
+      member: newMember,
+    });
+  } catch (error) {
+    console.error("Add team member error:", error);
+    res.status(500).json({ message: "Failed to add team member" });
   }
 });
 
@@ -94,7 +168,6 @@ router.post("/", authMiddleware, adminOnly, async (req: AuthRequest, res) => {
       return res.status(400).json({ message: "Brand name is required" });
     }
 
-    // Check if brand already exists
     const existingBrand = await Brand.findOne({ name });
     if (existingBrand) {
       return res.status(400).json({ message: "Brand already exists" });
@@ -104,6 +177,7 @@ router.post("/", authMiddleware, adminOnly, async (req: AuthRequest, res) => {
       name,
       description,
       createdBy: req.user.id,
+      teamMembers: [],
     });
 
     const populatedBrand = await Brand.findById(newBrand._id).populate(
@@ -131,7 +205,6 @@ router.put("/:id", authMiddleware, adminOnly, async (req, res) => {
       return res.status(400).json({ message: "Brand name is required" });
     }
 
-    // Check if another brand with same name exists
     const existingBrand = await Brand.findOne({ name, _id: { $ne: id } });
     if (existingBrand) {
       return res.status(400).json({ message: "Brand name already exists" });
