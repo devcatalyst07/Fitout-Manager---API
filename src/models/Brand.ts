@@ -1,14 +1,29 @@
-import mongoose, { Document, Schema } from 'mongoose';
+// ========================================
+// Brand.ts MODEL UPDATE
+// ========================================
+// Location: /src/models/Brand.ts
 
+import mongoose, { Schema, Document } from "mongoose";
+
+// Team Member Interface
+interface BrandTeamMember {
+  _id: string;
+  name: string;
+  email: string;
+}
+
+// Brand Interface
 export interface IBrand extends Document {
   name: string;
   description?: string;
   isActive: boolean;
   createdBy: mongoose.Types.ObjectId;
+  teamMembers: BrandTeamMember[]; // ← ADD THIS!
   createdAt: Date;
   updatedAt: Date;
 }
 
+// Brand Schema
 const brandSchema = new Schema<IBrand>(
   {
     name: {
@@ -27,15 +42,24 @@ const brandSchema = new Schema<IBrand>(
     },
     createdBy: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
+    },
+    // ← ADD THIS FIELD:
+    teamMembers: {
+      type: [
+        {
+          _id: String,
+          name: String,
+          email: String,
+        },
+      ],
+      default: [],
     },
   },
   {
     timestamps: true,
-  }
+  },
 );
 
-const Brand = mongoose.model<IBrand>('Brand', brandSchema);
-
-export default Brand;
+export default mongoose.model<IBrand>("Brand", brandSchema);
