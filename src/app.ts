@@ -116,7 +116,7 @@ app.use(
     res: express.Response,
     next: express.NextFunction,
   ) => {
-    console.error("❌ Error:", err);
+    console.error("Error:", err);
     res.status(err.status || 500).json({
       message: err.message || "Internal server error",
       error: process.env.NODE_ENV === "development" ? err.stack : undefined,
