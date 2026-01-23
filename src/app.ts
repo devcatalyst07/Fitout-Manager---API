@@ -7,6 +7,7 @@ import projectRoutes from "./routes/project.routes";
 import documentRoutes from "./routes/document.routes";
 import financeRoutes from './routes/finance.routes';
 import reportsRoutes from './routes/reports.routes'; 
+import threadRoutes from './routes/thread.routes';
 import taskRoutes from "./routes/task.routes";
 import budgetRoutes from "./routes/budget.routes";
 import teamRoutes from "./routes/team.routes";
@@ -37,13 +38,11 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Logging Middleware (Development)
-if (process.env.NODE_ENV === 'development') {
-  app.use((req, res, next) => {
-    console.log(`📍 ${req.method} ${req.path}`);
-    next();
-  });
-}
+// Logging Middleware (All environments for debugging)
+app.use((req, res, next) => {
+  console.log(`📍 ${req.method} ${req.path}`);
+  next();
+});
 
 // Static Files
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
@@ -73,30 +72,36 @@ app.get("/", (_, res) => {
       team: "/api/projects/:projectId/team",
       finance: "/api/finance",
       brands: "/api/brands",
+      threads: "/api/brands/:brandId/threads",
     },
   });
 });
 
-// API Routes
+// API Routes - ORDER MATTERS!
 app.use("/api/auth", authRoutes);
 app.use("/api/admin", adminRoutes);
 app.use('/api/admin', dashboardRoutes);
+
+// Brand and Thread routes BEFORE project routes to avoid conflicts
+app.use("/api/brands", brandRoutes);
+app.use('/api', threadRoutes); // Handles /api/brands/:brandId/threads
+
 app.use("/api/projects", projectRoutes);
 app.use("/api/projects", taskRoutes);
 app.use("/api/projects", budgetRoutes);
-app.use('/api/finance', financeRoutes);
-app.use('/api/admin', reportsRoutes);
 app.use("/api/projects", teamRoutes);
 app.use("/api/projects", overviewRoutes); 
 app.use("/api/projects", insightsRoutes); 
 app.use("/api/projects", activityRoutes);
 app.use("/api/projects", approvalRoutes);
+
+app.use('/api/finance', financeRoutes);
+app.use('/api/admin', reportsRoutes);
 app.use("/api/documents", documentRoutes);
 app.use("/api/tasks", commentRoutes);
 app.use("/api/tasks", activityLogRoutes);
 app.use("/api", uploadRoutes);
 app.use("/api", calendarRoutes);
-app.use("/api/brands", brandRoutes);
 
 // 404 Handler
 app.use((req, res) => {
@@ -104,7 +109,8 @@ app.use((req, res) => {
   res.status(404).json({ 
     message: "Route not found",
     path: req.path,
-    method: req.method
+    method: req.method,
+    hint: "Check if the route is registered and the URL is correct"
   });
 });
 

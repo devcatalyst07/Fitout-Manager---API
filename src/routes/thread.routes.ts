@@ -32,15 +32,87 @@ const canAccessThread = async (userId: string, thread: any) => {
   return !!isTeamMember || thread.createdBy.toString() === userId;
 };
 
+// CREATE thread
+router.post('/brands/:brandId/threads', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const { brandId } = req.params;
+    const { title, content, projectId, attachments } = req.body;
+
+    console.log('CREATE THREAD REQUEST:', {
+      brandId,
+      userId: req.user.id,
+      hasTitle: !!title,
+      hasContent: !!content,
+      projectId,
+      attachmentsCount: attachments?.length || 0
+    });
+
+    if (!title || !content) {
+      return res.status(400).json({ message: 'Title and content are required' });
+    }
+
+    // Verify brand exists
+    const brand = await Brand.findById(brandId);
+    if (!brand) {
+      console.log('Brand not found:', brandId);
+      return res.status(404).json({ message: 'Brand not found' });
+    }
+
+    console.log('Brand found:', brand.name);
+
+    // If projectId specified, verify user is team member
+    if (projectId) {
+      const isTeamMember = await TeamMember.findOne({
+        projectId,
+        userId: req.user.id,
+        status: 'active',
+      });
+
+      if (!isTeamMember) {
+        console.log('User not a team member of project:', projectId);
+        return res.status(403).json({ message: 'You are not a member of this project' });
+      }
+      console.log('User is team member of project');
+    }
+
+    const newThread = await Thread.create({
+      title,
+      content,
+      brandId,
+      projectId: projectId || undefined,
+      createdBy: req.user.id,
+      createdByName: req.user.name,
+      createdByEmail: req.user.email,
+      attachments: attachments || [],
+    });
+
+    console.log('Thread created successfully:', newThread._id);
+
+    res.status(201).json({
+      message: 'Thread created successfully',
+      thread: newThread,
+    });
+  } catch (error) {
+    console.error('Create thread error:', error);
+    res.status(500).json({ 
+      message: 'Failed to create thread',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 // GET all threads for a brand (with filtering)
 router.get('/brands/:brandId/threads', authMiddleware, async (req: AuthRequest, res) => {
   try {
     const { brandId } = req.params;
     const { projectId } = req.query;
 
+    console.log('GET THREADS REQUEST:', { brandId, projectId, userId: req.user.id });
+
     // Verify brand exists
     const brand = await Brand.findById(brandId);
     if (!brand) {
+      console.log('Brand not found:', brandId);
       return res.status(404).json({ message: 'Brand not found' });
     }
 
@@ -56,6 +128,8 @@ router.get('/brands/:brandId/threads', authMiddleware, async (req: AuthRequest, 
       .sort({ isPinned: -1, createdAt: -1 })
       .lean();
 
+    console.log(`Found ${threads.length} threads for brand`);
+
     // Filter threads based on user access
     const accessibleThreads = [];
     for (const thread of threads) {
@@ -65,10 +139,15 @@ router.get('/brands/:brandId/threads', authMiddleware, async (req: AuthRequest, 
       }
     }
 
+    console.log(`User has access to ${accessibleThreads.length} threads`);
+
     res.json(accessibleThreads);
   } catch (error) {
     console.error('Get threads error:', error);
-    res.status(500).json({ message: 'Failed to fetch threads' });
+    res.status(500).json({ 
+      message: 'Failed to fetch threads',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
   }
 });
 
@@ -127,56 +206,6 @@ router.get('/brands/:brandId/projects', authMiddleware, async (req: AuthRequest,
   } catch (error) {
     console.error('Get brand projects error:', error);
     res.status(500).json({ message: 'Failed to fetch projects' });
-  }
-});
-
-// CREATE thread
-router.post('/brands/:brandId/threads', authMiddleware, async (req: AuthRequest, res) => {
-  try {
-    const { brandId } = req.params;
-    const { title, content, projectId, attachments } = req.body;
-
-    if (!title || !content) {
-      return res.status(400).json({ message: 'Title and content are required' });
-    }
-
-    // Verify brand exists
-    const brand = await Brand.findById(brandId);
-    if (!brand) {
-      return res.status(404).json({ message: 'Brand not found' });
-    }
-
-    // If projectId specified, verify user is team member
-    if (projectId) {
-      const isTeamMember = await TeamMember.findOne({
-        projectId,
-        userId: req.user.id,
-        status: 'active',
-      });
-
-      if (!isTeamMember) {
-        return res.status(403).json({ message: 'You are not a member of this project' });
-      }
-    }
-
-    const newThread = await Thread.create({
-      title,
-      content,
-      brandId,
-      projectId: projectId || undefined,
-      createdBy: req.user.id,
-      createdByName: req.user.name,
-      createdByEmail: req.user.email,
-      attachments: attachments || [],
-    });
-
-    res.status(201).json({
-      message: 'Thread created successfully',
-      thread: newThread,
-    });
-  } catch (error) {
-    console.error('Create thread error:', error);
-    res.status(500).json({ message: 'Failed to create thread' });
   }
 });
 
