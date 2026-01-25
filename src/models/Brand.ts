@@ -1,8 +1,3 @@
-// ========================================
-// Brand.ts MODEL UPDATE
-// ========================================
-// Location: /src/models/Brand.ts
-
 import mongoose, { Schema, Document } from "mongoose";
 
 // Team Member Interface
@@ -18,7 +13,7 @@ export interface IBrand extends Document {
   description?: string;
   isActive: boolean;
   createdBy: mongoose.Types.ObjectId;
-  teamMembers: BrandTeamMember[]; // ← ADD THIS!
+  teamMembers: BrandTeamMember[];
   createdAt: Date;
   updatedAt: Date;
 }

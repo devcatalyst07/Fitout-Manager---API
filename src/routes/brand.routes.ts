@@ -35,7 +35,7 @@ router.get("/all", authMiddleware, adminOnly, async (req, res) => {
   }
 });
 
-// GET brand dashboard data WITH TASK COMPLETION
+// GET brand dashboard data WITH REAL DATA
 router.get("/:id/dashboard", authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
@@ -52,31 +52,43 @@ router.get("/:id/dashboard", authMiddleware, async (req, res) => {
       .sort({ createdAt: -1 });
 
     // For each project, calculate completion based on tasks
-    const projectsWithCompletion = await Promise.all(
+    const projectsWithData = await Promise.all(
       projects.map(async (project) => {
         // Get all tasks for this project
         const tasks = await Task.find({ projectId: project._id });
 
+        // Calculate task-based completion
         let completionPercent = 0;
+        let completedTaskCount = 0;
 
         if (tasks.length > 0) {
-          // Calculate average completion of all tasks
+          // Count tasks that are "Done"
+          completedTaskCount = tasks.filter((t) => t.status === "Done").length;
+
+          // Calculate average progress of all tasks
           const totalProgress = tasks.reduce(
             (sum, task) => sum + (task.progress || 0),
             0,
           );
-          completionPercent = totalProgress / tasks.length;
+          completionPercent = Math.round(totalProgress / tasks.length);
         }
+
+        // Determine if project is completed: ALL tasks must be "Done"
+        const isCompleted =
+          tasks.length > 0 && completedTaskCount === tasks.length;
 
         return {
           _id: project._id,
           projectName: project.projectName,
-          status: project.status,
-          budget: project.budget,
+          status: isCompleted ? "Completed" : project.status,
+          isCompleted,
+          budget: project.budget || 0,
           spent: project.spent || 0,
-          completionPercent: Math.round(completionPercent), // Round to whole number
+          completionPercent,
           taskCount: tasks.length,
+          completedTaskCount,
           createdAt: project.createdAt,
+          updatedAt: project.updatedAt,
         };
       }),
     );
@@ -91,7 +103,7 @@ router.get("/:id/dashboard", authMiddleware, async (req, res) => {
         createdAt: brand.createdAt,
         updatedAt: brand.updatedAt,
       },
-      projects: projectsWithCompletion,
+      projects: projectsWithData,
     });
   } catch (error) {
     console.error("Dashboard fetch error:", error);
