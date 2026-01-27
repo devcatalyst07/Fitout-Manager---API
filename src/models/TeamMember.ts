@@ -1,10 +1,10 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import mongoose, { Schema, Document } from "mongoose";
 
 export interface ITeamMember extends Document {
   userId: mongoose.Types.ObjectId;
   projectId: mongoose.Types.ObjectId;
-  role: 'ProjectManager' | 'Finance' | 'Vendor' | 'Designer' | 'Member';
-  status: 'active' | 'pending' | 'removed';
+  roleId: mongoose.Types.ObjectId;
+  status: "active" | "pending" | "removed";
   addedBy: mongoose.Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
@@ -14,36 +14,36 @@ const TeamMemberSchema: Schema = new Schema(
   {
     userId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
     },
     projectId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Project',
+      ref: "Project",
       required: true,
     },
-    role: {
-      type: String,
-      enum: ['ProjectManager', 'Finance', 'Vendor', 'Designer', 'Member'],
-      default: 'Member',
+    roleId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Role",
+      required: true,
     },
     status: {
       type: String,
-      enum: ['active', 'pending', 'removed'],
-      default: 'active',
+      enum: ["active", "pending", "removed"],
+      default: "active",
     },
     addedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
     },
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Ensure a user can only be added once per project
 TeamMemberSchema.index({ userId: 1, projectId: 1 }, { unique: true });
 
-export default mongoose.model<ITeamMember>('TeamMember', TeamMemberSchema);
+export default mongoose.model<ITeamMember>("TeamMember", TeamMemberSchema);
