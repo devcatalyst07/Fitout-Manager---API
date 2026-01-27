@@ -21,6 +21,7 @@ import activityRoutes from "./routes/activity.routes";
 import calendarRoutes from "./routes/calendarRoutes";
 import dashboardRoutes from './routes/dashboard.routes';
 import brandRoutes from './routes/brand.routes';
+import roleRoutes from "./routes/role.routes";
 
 const app = express();
 
@@ -85,6 +86,7 @@ app.use('/api/admin', dashboardRoutes);
 // Brand and Thread routes BEFORE project routes to avoid conflicts
 app.use("/api/brands", brandRoutes);
 app.use('/api', threadRoutes); // Handles /api/brands/:brandId/threads
+app.use("/api/roles", roleRoutes); // Role management routes
 
 app.use("/api/projects", projectRoutes);
 app.use("/api/projects", taskRoutes);
