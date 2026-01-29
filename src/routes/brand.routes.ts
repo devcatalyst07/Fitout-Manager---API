@@ -135,8 +135,8 @@ router.post("/:id/team", authMiddleware, async (req, res) => {
     const { id } = req.params;
     const { name, email } = req.body;
 
-    if (!name || !email) {
-      return res.status(400).json({ message: "Name and email are required" });
+    if (!email) {
+      return res.status(400).json({ message: "Email is required" });
     }
 
     const brand = await Brand.findById(id);
