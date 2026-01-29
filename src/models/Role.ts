@@ -17,21 +17,21 @@ export interface IRole extends Document {
   updatedAt: Date;
 }
 
-const PermissionSchema = new Schema(
-  {
-    id: { type: String, required: true },
-    label: { type: String, required: true },
-    checked: { type: Boolean, default: false },
-    children: [
-      {
-        id: { type: String, required: true },
-        label: { type: String, required: true },
-        checked: { type: Boolean, default: false },
-      },
-    ],
-  },
-  { _id: false },
-);
+// const PermissionSchema = new Schema(
+//   {
+//     id: { type: String, required: true },
+//     label: { type: String, required: true },
+//     checked: { type: Boolean, default: false },
+//     children: [
+//       {
+//         id: { type: String, required: true },
+//         label: { type: String, required: true },
+//         checked: { type: Boolean, default: false },
+//       },
+//     ],
+//   },
+//   { _id: false },
+// );
 
 const RoleSchema: Schema = new Schema(
   {
@@ -45,7 +45,10 @@ const RoleSchema: Schema = new Schema(
       ref: "Brand",
       required: true,
     },
-    permissions: [PermissionSchema],
+    permissions: {
+      type: Schema.Types.Mixed, // ← CHANGE TO Mixed - allows any structure
+      default: [],
+    },
     isDefault: {
       type: Boolean,
       default: false,
