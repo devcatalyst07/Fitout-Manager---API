@@ -31,7 +31,7 @@ router.get("/brand/:brandId", authMiddleware, adminOnly, async (req, res) => {
 });
 
 // GET single role by ID
-router.get("/:roleId", authMiddleware, adminOnly, async (req, res) => {
+router.get("/:roleId", authMiddleware, async (req, res) => {
   try {
     const { roleId } = req.params;
 
