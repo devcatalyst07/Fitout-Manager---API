@@ -44,9 +44,13 @@ router.post('/login', async (req, res) => {
       const teamMember = await TeamMember.findOne({
         userId: user._id,
         status: "active",
-      }).populate("roleId");
+      })
+        .populate("roleId", "_id name")
+        .sort({ createdAt: -1 });
 
-      if (teamMember) roleId = teamMember.roleId._id;
+      if (teamMember && teamMember.roleId) {
+        roleId = teamMember.roleId._id;
+      }
     }
 
     // Generate JWT token
@@ -68,7 +72,7 @@ router.post('/login', async (req, res) => {
       token,
       role: user.role,
       name: user.name,
-      roleId,
+      roleId: roleId,
     });
   } catch (err) {
     console.error('Auth error:', err);
