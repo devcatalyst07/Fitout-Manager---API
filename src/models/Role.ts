@@ -46,7 +46,7 @@ const RoleSchema: Schema = new Schema(
       required: true,
     },
     permissions: {
-      type: Schema.Types.Mixed, // ← CHANGE TO Mixed - allows any structure
+      type: Schema.Types.Mixed, // allows any structure
       default: [],
     },
     isDefault: {
