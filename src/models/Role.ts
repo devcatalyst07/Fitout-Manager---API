@@ -9,29 +9,13 @@ export interface IPermission {
 
 export interface IRole extends Document {
   name: string;
-  brandId: mongoose.Types.ObjectId;
+  brandId?: mongoose.Types.ObjectId | null; // ← CHANGED: Optional now for "All Brands"
   permissions: IPermission[];
   isDefault: boolean;
   createdBy: mongoose.Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
 }
-
-// const PermissionSchema = new Schema(
-//   {
-//     id: { type: String, required: true },
-//     label: { type: String, required: true },
-//     checked: { type: Boolean, default: false },
-//     children: [
-//       {
-//         id: { type: String, required: true },
-//         label: { type: String, required: true },
-//         checked: { type: Boolean, default: false },
-//       },
-//     ],
-//   },
-//   { _id: false },
-// );
 
 const RoleSchema: Schema = new Schema(
   {
@@ -43,7 +27,8 @@ const RoleSchema: Schema = new Schema(
     brandId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Brand",
-      required: true,
+      required: false, // ← CHANGED: Not required anymore
+      default: null, // ← ADDED: null = "All Brands"
     },
     permissions: {
       type: Schema.Types.Mixed, // allows any structure
@@ -64,8 +49,16 @@ const RoleSchema: Schema = new Schema(
   },
 );
 
-// Ensure role names are unique within a brand
-RoleSchema.index({ name: 1, brandId: 1 }, { unique: true });
+// UPDATED INDEX: Allow null brandId for "All Brands" roles
+// Roles with null brandId can have duplicate names (one per admin creating it)
+// Roles with specific brandId must have unique names within that brand
+RoleSchema.index(
+  { name: 1, brandId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { brandId: { $ne: null } }, // ← Only enforce uniqueness when brandId exists
+  },
+);
 
 // Index for efficient queries
 RoleSchema.index({ brandId: 1, isDefault: 1 });
