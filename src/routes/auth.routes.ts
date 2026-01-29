@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import User from '../models/User';
 import { createAdmin } from '../seed/createAdmin';
+import TeamMember from "../models/TeamMember";
 
 const router = Router();
 
@@ -37,6 +38,17 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
+    // For regular users, fetch their role from TeamMember
+    let roleId = null;
+    if (user.role === "user") {
+      const teamMember = await TeamMember.findOne({
+        userId: user._id,
+        status: "active",
+      }).populate("roleId");
+
+      if (teamMember) roleId = teamMember.roleId._id;
+    }
+
     // Generate JWT token
     const token = jwt.sign(
       {
@@ -44,9 +56,10 @@ router.post('/login', async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        roleId,
       },
       process.env.JWT_SECRET as string,
-      { expiresIn: '1d' }
+      { expiresIn: "1d" },
     );
 
     console.log('Login successful:', { email, role: user.role });
@@ -55,6 +68,7 @@ router.post('/login', async (req, res) => {
       token,
       role: user.role,
       name: user.name,
+      roleId,
     });
   } catch (err) {
     console.error('Auth error:', err);
