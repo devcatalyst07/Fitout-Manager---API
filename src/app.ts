@@ -107,26 +107,12 @@ app.use("/api", calendarRoutes);
 
 // 404 Handler
 app.use((req, res) => {
-  console.log(`\n${"❌".repeat(30)}`);
-  console.log(`❌ 404 NOT FOUND`);
-  console.log(`📍 Path: ${req.path}`);
-  console.log(`🌐 Full URL: ${req.originalUrl}`);
-  console.log(`🔧 Method: ${req.method}`);
-  console.log(`🔑 Auth: ${req.headers.authorization ? "✅" : "❌"}`);
-  console.log(`${"❌".repeat(30)}\n`);
-  res.status(404).json({
+  console.log(`404 Not Found: ${req.method} ${req.path}`);
+  res.status(404).json({ 
     message: "Route not found",
     path: req.path,
     method: req.method,
-    hint: "Check if the route is registered and the URL is correct",
-    availableEndpoints: [
-      "GET /api/projects",
-      "GET /api/projects/stats",
-      "GET /api/projects/:id",
-      "POST /api/projects",
-      "PUT /api/projects/:id",
-      "DELETE /api/projects/:id",
-    ],
+    hint: "Check if the route is registered and the URL is correct"
   });
 });
 
@@ -138,14 +124,7 @@ app.use(
     res: express.Response,
     next: express.NextFunction,
   ) => {
-    console.error("\n" + "🔥".repeat(30));
-    console.error("🔥 GLOBAL ERROR HANDLER");
-    console.error("📍 Path:", req.path);
-    console.error("🔧 Method:", req.method);
-    console.error("❌ Error:", err.message);
-    console.error("📚 Stack:", err.stack);
-    console.error("🔥".repeat(30) + "\n");
-    // console.error("Error:", err);
+    console.error("Error:", err);
     res.status(err.status || 500).json({
       message: err.message || "Internal server error",
       error: process.env.NODE_ENV === "development" ? err.stack : undefined,
