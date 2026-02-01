@@ -3,18 +3,17 @@ import { authMiddleware, AuthRequest } from "../middleware/auth";
 import { adminOnly } from "../middleware/role";
 import Project from "../models/Projects";
 import TeamMember from "../models/TeamMember";
-import User from "../models/User";
+import { copyWorkflowTemplatesToProject } from "../services/workflowTemplateService"; // Fixed: removed extra 'e'
 
 const router = Router();
 
-// 🔥 DEBUGGING MIDDLEWARE - lagay to sa pinakataas
+// 🔥 DEBUGGING MIDDLEWARE
 router.use((req, res, next) => {
-  console.log(`🎯 PROJECT ROUTE: ${req.method} ${req.path}`);
-  console.log(`📍 Full URL: ${req.originalUrl}`);
+  console.log(`PROJECT ROUTE: ${req.method} ${req.path}`);
   next();
 });
 
-// GET all projects - ALLOW USERS TO SEE THEIR ASSIGNED PROJECTS
+// GET all projects
 router.get("/", authMiddleware, async (req: AuthRequest, res) => {
   try {
     console.log(`👤 User Role: ${req.user.role}, User ID: ${req.user.id}`);
@@ -22,26 +21,19 @@ router.get("/", authMiddleware, async (req: AuthRequest, res) => {
     let projects;
 
     if (req.user.role === "admin") {
-      // Admin sees all projects
       projects = await Project.find()
         .populate("userId", "name email")
         .sort({ createdAt: -1 });
-      console.log(`📊 Admin found ${projects.length} projects`);
     } else {
-      // Users see only projects they're assigned to
       const teamAssignments = await TeamMember.find({
         userId: req.user.id,
         status: "active",
       }).select("projectId");
 
-      console.log(`👥 User team assignments: ${teamAssignments.length}`);
-
       const projectIds = teamAssignments.map((tm) => tm.projectId);
       projects = await Project.find({ _id: { $in: projectIds } })
         .populate("userId", "name email")
         .sort({ createdAt: -1 });
-
-      console.log(`📊 User found ${projects.length} projects`);
     }
 
     res.json(projects);
@@ -54,17 +46,12 @@ router.get("/", authMiddleware, async (req: AuthRequest, res) => {
   }
 });
 
-// GET project statistics - ALLOW USERS TO SEE THEIR STATS
+// GET project statistics
 router.get("/stats", authMiddleware, async (req: AuthRequest, res) => {
   try {
-    console.log(
-      `📈 Fetching stats for user: ${req.user.id}, role: ${req.user.role}`,
-    );
-
     let query = {};
 
     if (req.user.role !== "admin") {
-      // Users only see stats from their assigned projects
       const teamAssignments = await TeamMember.find({
         userId: req.user.id,
         status: "active",
@@ -88,15 +75,12 @@ router.get("/stats", authMiddleware, async (req: AuthRequest, res) => {
       status: "Planning",
     });
 
-    const stats = {
+    res.json({
       total: totalProjects,
       active: activeProjects,
       completed: completedProjects,
       planning: planningProjects,
-    };
-
-    console.log(`✅ Stats:`, stats);
-    res.json(stats);
+    });
   } catch (error) {
     console.error("❌ Get project stats error:", error);
     res.status(500).json({
@@ -106,22 +90,18 @@ router.get("/stats", authMiddleware, async (req: AuthRequest, res) => {
   }
 });
 
-// GET single project by ID - ALLOW USERS IF ASSIGNED
+// GET single project by ID
 router.get("/:id", authMiddleware, async (req: AuthRequest, res) => {
   try {
-    console.log(`🔍 Fetching project: ${req.params.id}`);
-
     const project = await Project.findById(req.params.id).populate(
       "userId",
-      "name email",
+      "name email"
     );
 
     if (!project) {
-      console.log(`❌ Project not found: ${req.params.id}`);
       return res.status(404).json({ message: "Project not found" });
     }
 
-    // If user (not admin), check if they're assigned to this project
     if (req.user.role !== "admin") {
       const teamMember = await TeamMember.findOne({
         userId: req.user.id,
@@ -130,16 +110,12 @@ router.get("/:id", authMiddleware, async (req: AuthRequest, res) => {
       });
 
       if (!teamMember) {
-        console.log(
-          `🚫 User ${req.user.id} not assigned to project ${req.params.id}`,
-        );
         return res
           .status(403)
           .json({ message: "Access denied to this project" });
       }
     }
 
-    console.log(`✅ Project found: ${project.projectName}`);
     res.json(project);
   } catch (error) {
     console.error("❌ Get project error:", error);
@@ -153,7 +129,7 @@ router.get("/:id", authMiddleware, async (req: AuthRequest, res) => {
 // CREATE new project (Admin only)
 router.post("/", authMiddleware, adminOnly, async (req: AuthRequest, res) => {
   try {
-    console.log(`➕ Creating new project by admin: ${req.user.id}`);
+    console.log(`Creating new project by admin: ${req.user.id}`);
 
     const {
       projectName,
@@ -174,6 +150,7 @@ router.post("/", authMiddleware, adminOnly, async (req: AuthRequest, res) => {
       return res.status(400).json({ message: "Missing required fields" });
     }
 
+    // Create the project
     const newProject = await Project.create({
       projectName,
       brand,
@@ -192,18 +169,37 @@ router.post("/", authMiddleware, adminOnly, async (req: AuthRequest, res) => {
       createdBy: "admin",
     });
 
+    console.log(`Project created: ${newProject.projectName}`);
+
+    // Copy workflow templates (phases and tasks) to the project
+    try {
+      const result = await copyWorkflowTemplatesToProject(
+        newProject._id,
+        scope,
+        workflow,
+        req.user.id
+      );
+
+      console.log(
+        `Copied ${result.phasesCreated} phases and ${result.tasksCreated} tasks`
+      );
+    } catch (templateError) {
+      console.error("Error copying templates:", templateError);
+      // Don't fail the project creation if template copying fails
+      // The project is still created, just without predefined tasks
+    }
+
     const populatedProject = await Project.findById(newProject._id).populate(
       "userId",
-      "name email",
+      "name email"
     );
 
-    console.log(`✅ Project created: ${populatedProject?.projectName}`);
     res.status(201).json({
       message: "Project created successfully",
       project: populatedProject,
     });
   } catch (error) {
-    console.error("❌ Create project error:", error);
+    console.error("Create project error:", error);
     res.status(500).json({
       message: "Failed to create project",
       error: error instanceof Error ? error.message : "Unknown error",
@@ -214,8 +210,6 @@ router.post("/", authMiddleware, adminOnly, async (req: AuthRequest, res) => {
 // UPDATE project (Admin only)
 router.put("/:id", authMiddleware, adminOnly, async (req, res) => {
   try {
-    console.log(`📝 Updating project: ${req.params.id}`);
-
     const { id } = req.params;
     const updateData = req.body;
 
@@ -225,17 +219,15 @@ router.put("/:id", authMiddleware, adminOnly, async (req, res) => {
     }).populate("userId", "name email");
 
     if (!updatedProject) {
-      console.log(`❌ Project not found for update: ${id}`);
       return res.status(404).json({ message: "Project not found" });
     }
 
-    console.log(`✅ Project updated: ${updatedProject.projectName}`);
     res.json({
       message: "Project updated successfully",
       project: updatedProject,
     });
   } catch (error) {
-    console.error("❌ Update project error:", error);
+    console.error("Update project error:", error);
     res.status(500).json({
       message: "Failed to update project",
       error: error instanceof Error ? error.message : "Unknown error",
@@ -246,21 +238,17 @@ router.put("/:id", authMiddleware, adminOnly, async (req, res) => {
 // DELETE project (Admin only)
 router.delete("/:id", authMiddleware, adminOnly, async (req, res) => {
   try {
-    console.log(`🗑️ Deleting project: ${req.params.id}`);
-
     const { id } = req.params;
 
     const deletedProject = await Project.findByIdAndDelete(id);
 
     if (!deletedProject) {
-      console.log(`❌ Project not found for deletion: ${id}`);
       return res.status(404).json({ message: "Project not found" });
     }
 
-    console.log(`✅ Project deleted: ${deletedProject.projectName}`);
     res.json({ message: "Project deleted successfully" });
   } catch (error) {
-    console.error("❌ Delete project error:", error);
+    console.error("Delete project error:", error);
     res.status(500).json({
       message: "Failed to delete project",
       error: error instanceof Error ? error.message : "Unknown error",

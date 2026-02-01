@@ -80,7 +80,7 @@ router.get('/reports/portfolio/csv', authMiddleware, adminOnly, async (req, res)
     ]);
 
     for (const project of projects) {
-      const projectTasks = allTasks.filter(t => t.projectId.toString() === project._id.toString());
+      const projectTasks = allTasks.filter(t => t.projectId && t.projectId.toString() === project._id.toString());
       const projectBudgetItems = allBudgetItems.filter(b => b.projectId.toString() === project._id.toString());
 
       csvRows.push([
@@ -139,7 +139,7 @@ router.get('/reports/portfolio/pdf-data', authMiddleware, adminOnly, async (req,
 
     // Project details
     const projectDetails = projects.map(project => {
-      const projectTasks = allTasks.filter(t => t.projectId.toString() === project._id.toString());
+      const projectTasks = allTasks.filter(t => t.projectId && t.projectId.toString() === project._id.toString());
       const projectBudgetItems = allBudgetItems.filter(b => b.projectId.toString() === project._id.toString());
 
       return {
@@ -224,7 +224,7 @@ router.get('/reports/brand/:brandName/csv', authMiddleware, adminOnly, async (re
     csvRows.push(['Project Name', 'Status', 'Budget', 'Spent', 'Tasks', 'Completed', 'Budget Items']);
 
     for (const project of projects) {
-      const projectTasks = tasks.filter(t => t.projectId.toString() === project._id.toString());
+      const projectTasks = tasks.filter(t => t.projectId && t.projectId.toString() === project._id.toString());
       const projectBudgetItems = budgetItems.filter(b => b.projectId.toString() === project._id.toString());
 
       csvRows.push([
@@ -262,7 +262,7 @@ router.get('/reports/brand/:brandName/pdf-data', authMiddleware, adminOnly, asyn
     const totalSpent = projects.reduce((sum, p) => sum + (p.spent || 0), 0);
 
     const projectDetails = projects.map(project => {
-      const projectTasks = tasks.filter(t => t.projectId.toString() === project._id.toString());
+      const projectTasks = tasks.filter(t => t.projectId && t.projectId.toString() === project._id.toString());
       const projectBudgetItems = budgetItems.filter(b => b.projectId.toString() === project._id.toString());
 
       return {

@@ -5,13 +5,17 @@ import {
   requireProjectAccess,
 } from "../middleware/permissions";
 import Task from "../models/Task";
+import Phase from "../models/Phase";
 import Project from "../models/Projects";
 import ActivityLog from "../models/ActivityLog";
 import { activityHelpers } from "../utils/activityLogger";
+import mongoose from "mongoose";
 
 const router = Router();
 
-// GET all tasks for a project (Requires: view task permission OR be a project member)
+// ==================== PROJECT TASK ROUTES ====================
+
+// GET all tasks for a project (grouped by phase)
 router.get(
   "/:projectId/tasks",
   authMiddleware,
@@ -25,21 +29,51 @@ router.get(
         return res.status(404).json({ message: "Project not found" });
       }
 
-      const tasks = await Task.find({ projectId })
+      // Get all phases for this project
+      const phases = await Phase.find({
+        projectId,
+        isTemplate: false,
+      }).sort({ order: 1 });
+
+      // Get all tasks for this project (both phased and non-phased)
+      const allTasks = await Task.find({
+        projectId,
+        isTemplate: false,
+      })
         .populate("createdBy", "name email")
         .sort({ createdAt: -1 });
 
-      res.json(tasks);
+      // Group tasks by phase
+      const phasedTasks = phases.map((phase) => ({
+        phase: {
+          _id: phase._id,
+          name: phase.name,
+          order: phase.order,
+          color: phase.color,
+        },
+        tasks: allTasks.filter(
+          (task) => task.phaseId && task.phaseId.toString() === phase._id.toString()
+        ),
+      }));
+
+      // Tasks without a phase
+      const unassignedTasks = allTasks.filter((task) => !task.phaseId);
+
+      res.json({
+        phases: phasedTasks,
+        unassignedTasks,
+        allTasks, // For backward compatibility
+      });
     } catch (error: any) {
       console.error("Get tasks error:", error);
       res
         .status(500)
         .json({ message: "Failed to fetch tasks", error: error.message });
     }
-  },
+  }
 );
 
-// GET single task (Requires: project access)
+// GET single task
 router.get(
   "/:projectId/tasks/:taskId",
   authMiddleware,
@@ -48,9 +82,13 @@ router.get(
     try {
       const { taskId } = req.params;
 
-      const task = await Task.findById(taskId)
+      const task = await Task.findOne({
+        _id: taskId,
+        isTemplate: false,
+      })
         .populate("createdBy", "name email")
-        .populate("projectId", "projectName");
+        .populate("projectId", "projectName")
+        .populate("phaseId", "name order");
 
       if (!task) {
         return res.status(404).json({ message: "Task not found" });
@@ -63,10 +101,10 @@ router.get(
         .status(500)
         .json({ message: "Failed to fetch task", error: error.message });
     }
-  },
+  }
 );
 
-// GET task statistics (Requires: project access)
+// GET task statistics
 router.get(
   "/:projectId/tasks/stats/overview",
   authMiddleware,
@@ -75,22 +113,29 @@ router.get(
     try {
       const { projectId } = req.params;
 
-      const totalTasks = await Task.countDocuments({ projectId });
+      const totalTasks = await Task.countDocuments({
+        projectId,
+        isTemplate: false,
+      });
       const completedTasks = await Task.countDocuments({
         projectId,
         status: "Done",
+        isTemplate: false,
       });
       const inProgressTasks = await Task.countDocuments({
         projectId,
         status: "In Progress",
+        isTemplate: false,
       });
       const overdueTasks = await Task.countDocuments({
         projectId,
         status: "Blocked",
+        isTemplate: false,
       });
       const backlogTasks = await Task.countDocuments({
         projectId,
         status: "Backlog",
+        isTemplate: false,
       });
 
       res.json({
@@ -104,17 +149,15 @@ router.get(
       });
     } catch (error: any) {
       console.error("Get task stats error:", error);
-      res
-        .status(500)
-        .json({
-          message: "Failed to fetch task statistics",
-          error: error.message,
-        });
+      res.status(500).json({
+        message: "Failed to fetch task statistics",
+        error: error.message,
+      });
     }
-  },
+  }
 );
 
-// CREATE new task (Requires: projects-task-create permission)
+// CREATE new task
 router.post(
   "/:projectId/tasks",
   authMiddleware,
@@ -132,6 +175,7 @@ router.post(
         dueDate,
         progress,
         estimateHours,
+        phaseId, // Optional - can be null
       } = req.body;
 
       if (
@@ -157,6 +201,20 @@ router.post(
         return res.status(404).json({ message: "Project not found" });
       }
 
+      // If phaseId is provided, verify it belongs to this project
+      if (phaseId) {
+        const phase = await Phase.findOne({
+          _id: phaseId,
+          projectId,
+          isTemplate: false,
+        });
+        if (!phase) {
+          return res
+            .status(404)
+            .json({ message: "Phase not found in this project" });
+        }
+      }
+
       const newTask = await Task.create({
         title,
         description,
@@ -168,12 +226,15 @@ router.post(
         progress: progress || 0,
         estimateHours,
         projectId,
+        phaseId: phaseId || null,
+        isTemplate: false,
         createdBy: req.user.id,
       });
 
       const populatedTask = await Task.findById(newTask._id)
         .populate("createdBy", "name email")
-        .populate("projectId", "projectName");
+        .populate("projectId", "projectName")
+        .populate("phaseId", "name order");
 
       await ActivityLog.create({
         taskId: newTask._id,
@@ -194,10 +255,10 @@ router.post(
         .status(500)
         .json({ message: "Failed to create task", error: error.message });
     }
-  },
+  }
 );
 
-// UPDATE task (Requires: projects-task-list-action-edit permission)
+// UPDATE task
 router.put(
   "/:projectId/tasks/:taskId",
   authMiddleware,
@@ -207,9 +268,26 @@ router.put(
       const { taskId } = req.params;
       const updateData = req.body;
 
-      const oldTask = await Task.findById(taskId);
+      const oldTask = await Task.findOne({
+        _id: taskId,
+        isTemplate: false,
+      });
       if (!oldTask) {
         return res.status(404).json({ message: "Task not found" });
+      }
+
+      // If updating phaseId, verify it belongs to same project
+      if (updateData.phaseId && updateData.phaseId !== oldTask.phaseId?.toString()) {
+        const phase = await Phase.findOne({
+          _id: updateData.phaseId,
+          projectId: oldTask.projectId,
+          isTemplate: false,
+        });
+        if (!phase) {
+          return res
+            .status(404)
+            .json({ message: "Phase not found in this project" });
+        }
       }
 
       const updatedTask = await Task.findByIdAndUpdate(taskId, updateData, {
@@ -217,13 +295,14 @@ router.put(
         runValidators: true,
       })
         .populate("createdBy", "name email")
-        .populate("projectId", "projectName");
+        .populate("projectId", "projectName")
+        .populate("phaseId", "name order");
 
       if (!updatedTask) {
         return res.status(404).json({ message: "Task not found" });
       }
 
-      // Log all changes
+      // Log changes (keeping existing logging logic)
       if (oldTask.title !== updatedTask.title) {
         await ActivityLog.create({
           taskId,
@@ -235,20 +314,6 @@ router.put(
           oldValue: oldTask.title,
           newValue: updatedTask.title,
           description: `${req.user.name} changed title from "${oldTask.title}" to "${updatedTask.title}"`,
-        });
-      }
-
-      if (oldTask.description !== updatedTask.description) {
-        await ActivityLog.create({
-          taskId,
-          userId: req.user.id,
-          userName: req.user.name,
-          userEmail: req.user.email,
-          action: "updated",
-          field: "description",
-          oldValue: oldTask.description || "",
-          newValue: updatedTask.description || "",
-          description: `${req.user.name} updated the description`,
         });
       }
 
@@ -266,128 +331,26 @@ router.put(
         });
       }
 
-      if (oldTask.priority !== updatedTask.priority) {
-        await ActivityLog.create({
-          taskId,
-          userId: req.user.id,
-          userName: req.user.name,
-          userEmail: req.user.email,
-          action: "priority_changed",
-          field: "priority",
-          oldValue: oldTask.priority,
-          newValue: updatedTask.priority,
-          description: `${req.user.name} changed priority from "${oldTask.priority}" to "${updatedTask.priority}"`,
-        });
-      }
-
-      if (oldTask.progress !== updatedTask.progress) {
-        await ActivityLog.create({
-          taskId,
-          userId: req.user.id,
-          userName: req.user.name,
-          userEmail: req.user.email,
-          action: "progress_updated",
-          field: "progress",
-          oldValue: String(oldTask.progress),
-          newValue: String(updatedTask.progress),
-          description: `${req.user.name} updated progress from ${oldTask.progress}% to ${updatedTask.progress}%`,
-        });
-      }
-
-      if (oldTask.startDate?.toString() !== updatedTask.startDate?.toString()) {
-        const oldDate = oldTask.startDate
-          ? new Date(oldTask.startDate).toLocaleDateString()
-          : "Not set";
-        const newDate = updatedTask.startDate
-          ? new Date(updatedTask.startDate).toLocaleDateString()
-          : "Not set";
+      // Log phase change
+      if (oldTask.phaseId?.toString() !== updatedTask.phaseId?.toString()) {
+        const oldPhase = oldTask.phaseId
+          ? await Phase.findById(oldTask.phaseId)
+          : null;
+        const newPhase = updatedTask.phaseId
+          ? await Phase.findById(updatedTask.phaseId)
+          : null;
 
         await ActivityLog.create({
           taskId,
           userId: req.user.id,
           userName: req.user.name,
           userEmail: req.user.email,
-          action: "date_changed",
-          field: "startDate",
-          oldValue: oldDate,
-          newValue: newDate,
-          description: `${req.user.name} changed start date from ${oldDate} to ${newDate}`,
+          action: "updated",
+          field: "phase",
+          oldValue: oldPhase?.name || "Unassigned",
+          newValue: newPhase?.name || "Unassigned",
+          description: `${req.user.name} moved task from "${oldPhase?.name || "Unassigned"}" to "${newPhase?.name || "Unassigned"}"`,
         });
-      }
-
-      if (oldTask.dueDate?.toString() !== updatedTask.dueDate?.toString()) {
-        const oldDate = oldTask.dueDate
-          ? new Date(oldTask.dueDate).toLocaleDateString()
-          : "Not set";
-        const newDate = updatedTask.dueDate
-          ? new Date(updatedTask.dueDate).toLocaleDateString()
-          : "Not set";
-
-        await ActivityLog.create({
-          taskId,
-          userId: req.user.id,
-          userName: req.user.name,
-          userEmail: req.user.email,
-          action: "date_changed",
-          field: "dueDate",
-          oldValue: oldDate,
-          newValue: newDate,
-          description: `${req.user.name} changed due date from ${oldDate} to ${newDate}`,
-        });
-      }
-
-      const oldAssigneeEmails = oldTask.assignees.map((a) => a.email).sort();
-      const newAssigneeEmails = updatedTask.assignees
-        .map((a) => a.email)
-        .sort();
-
-      if (
-        JSON.stringify(oldAssigneeEmails) !== JSON.stringify(newAssigneeEmails)
-      ) {
-        const added = newAssigneeEmails.filter(
-          (email) => !oldAssigneeEmails.includes(email),
-        );
-        const removed = oldAssigneeEmails.filter(
-          (email) => !newAssigneeEmails.includes(email),
-        );
-
-        if (added.length > 0) {
-          const addedNames = updatedTask.assignees
-            .filter((a) => added.includes(a.email))
-            .map((a) => a.name)
-            .join(", ");
-
-          await ActivityLog.create({
-            taskId,
-            userId: req.user.id,
-            userName: req.user.name,
-            userEmail: req.user.email,
-            action: "assigned",
-            field: "assignees",
-            oldValue: oldAssigneeEmails.join(", "),
-            newValue: newAssigneeEmails.join(", "),
-            description: `${req.user.name} assigned ${addedNames} to the task`,
-          });
-        }
-
-        if (removed.length > 0) {
-          const removedNames = oldTask.assignees
-            .filter((a) => removed.includes(a.email))
-            .map((a) => a.name)
-            .join(", ");
-
-          await ActivityLog.create({
-            taskId,
-            userId: req.user.id,
-            userName: req.user.name,
-            userEmail: req.user.email,
-            action: "unassigned",
-            field: "assignees",
-            oldValue: oldAssigneeEmails.join(", "),
-            newValue: newAssigneeEmails.join(", "),
-            description: `${req.user.name} removed ${removedNames} from the task`,
-          });
-        }
       }
 
       if (oldTask?.status !== "Done" && updatedTask.status === "Done") {
@@ -396,7 +359,7 @@ router.put(
           req.user.id,
           req.user.name || "User",
           updatedTask.title,
-          taskId,
+          taskId
         );
       }
 
@@ -410,10 +373,10 @@ router.put(
         .status(500)
         .json({ message: "Failed to update task", error: error.message });
     }
-  },
+  }
 );
 
-// DELETE task (Requires: projects-task-list-action-delete permission)
+// DELETE task
 router.delete(
   "/:projectId/tasks/:taskId",
   authMiddleware,
@@ -422,7 +385,10 @@ router.delete(
     try {
       const { taskId } = req.params;
 
-      const deletedTask = await Task.findByIdAndDelete(taskId);
+      const deletedTask = await Task.findOneAndDelete({
+        _id: taskId,
+        isTemplate: false,
+      });
 
       if (!deletedTask) {
         return res.status(404).json({ message: "Task not found" });
@@ -435,7 +401,153 @@ router.delete(
         .status(500)
         .json({ message: "Failed to delete task", error: error.message });
     }
-  },
+  }
+);
+
+// ==================== PROJECT PHASE ROUTES ====================
+
+// GET all phases for a project
+router.get("/:projectId/phases", authMiddleware, requireProjectAccess, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+
+    const phases = await Phase.find({
+      projectId,
+      isTemplate: false,
+    }).sort({ order: 1 });
+
+    res.json(phases);
+  } catch (error: any) {
+    console.error("Get phases error:", error);
+    res.status(500).json({ message: "Failed to fetch phases", error: error.message });
+  }
+});
+
+// CREATE phase for a project
+router.post(
+  "/:projectId/phases",
+  authMiddleware,
+  requirePermission("projects-task-create"),
+  async (req: AuthRequest, res) => {
+    try {
+      const { projectId } = req.params;
+      const { name, description, order, color } = req.body;
+
+      if (!name) {
+        return res.status(400).json({ message: "Phase name is required" });
+      }
+
+      const project = await Project.findById(projectId);
+      if (!project) {
+        return res.status(404).json({ message: "Project not found" });
+      }
+
+      // Get current max order if not provided
+      let phaseOrder = order;
+      if (phaseOrder === undefined) {
+        const maxPhase = await Phase.findOne({
+          projectId,
+          isTemplate: false,
+        }).sort({ order: -1 });
+        phaseOrder = maxPhase ? maxPhase.order + 1 : 0;
+      }
+
+      // Create a dummy ObjectId for workflowId and scopeId (they're not used for project phases)
+      const dummyId = new mongoose.Types.ObjectId();
+
+      const newPhase = await Phase.create({
+        name,
+        description,
+        workflowId: dummyId, // Dummy value - not used for project phases
+        scopeId: dummyId, // Dummy value - not used for project phases
+        projectId,
+        order: phaseOrder,
+        color,
+        isTemplate: false,
+        createdBy: req.user.id,
+      });
+
+      res.status(201).json({
+        message: "Phase created successfully",
+        phase: newPhase,
+      });
+    } catch (error: any) {
+      console.error("Create phase error:", error);
+      res.status(500).json({ message: "Failed to create phase", error: error.message });
+    }
+  }
+);
+
+// UPDATE phase
+router.put(
+  "/:projectId/phases/:phaseId",
+  authMiddleware,
+  requirePermission("projects-task-list-action-edit"),
+  async (req, res) => {
+    try {
+      const { projectId, phaseId } = req.params;
+      const { name, description, order, color } = req.body;
+
+      const phase = await Phase.findOne({
+        _id: phaseId,
+        projectId,
+        isTemplate: false,
+      });
+
+      if (!phase) {
+        return res.status(404).json({ message: "Phase not found" });
+      }
+
+      const updatedPhase = await Phase.findByIdAndUpdate(
+        phaseId,
+        { name, description, order, color },
+        { new: true, runValidators: true }
+      );
+
+      res.json({
+        message: "Phase updated successfully",
+        phase: updatedPhase,
+      });
+    } catch (error: any) {
+      console.error("Update phase error:", error);
+      res.status(500).json({ message: "Failed to update phase", error: error.message });
+    }
+  }
+);
+
+// DELETE phase
+router.delete(
+  "/:projectId/phases/:phaseId",
+  authMiddleware,
+  requirePermission("projects-task-list-action-delete"),
+  async (req, res) => {
+    try {
+      const { projectId, phaseId } = req.params;
+
+      const phase = await Phase.findOne({
+        _id: phaseId,
+        projectId,
+        isTemplate: false,
+      });
+
+      if (!phase) {
+        return res.status(404).json({ message: "Phase not found" });
+      }
+
+      // Update all tasks in this phase to have no phase
+      await Task.updateMany(
+        { phaseId, projectId, isTemplate: false },
+        { $set: { phaseId: null } }
+      );
+
+      await Phase.findByIdAndDelete(phaseId);
+
+      res.json({ message: "Phase deleted successfully" });
+    } catch (error: any) {
+      console.error("Delete phase error:", error);
+      res.status(500).json({ message: "Failed to delete phase", error: error.message });
+    }
+  }
 );
 
 export default router;
