@@ -22,8 +22,8 @@ import calendarRoutes from "./routes/calendarRoutes";
 import dashboardRoutes from './routes/dashboard.routes';
 import brandRoutes from './routes/brand.routes';
 import roleRoutes from "./routes/role.routes";
-import scopeRoutes from "./routes/scope.routes"; // NEW: Scope routes
-
+import scopeRoutes from "./routes/scope.routes";
+import excelUploadRoutes from "./routes/excelUploadRoutes"; 
 const app = express();
 
 // CORS Configuration
@@ -75,7 +75,8 @@ app.get("/", (_, res) => {
       finance: "/api/finance",
       brands: "/api/brands",
       threads: "/api/brands/:brandId/threads",
-      scopes: "/api/scopes", // NEW
+      scopes: "/api/scopes",
+      excelUpload: "/api/scopes/:scopeId/workflows/:workflowId/parse-excel", 
     },
   });
 });
@@ -88,7 +89,9 @@ app.use('/api/admin', dashboardRoutes);
 // Brand, Thread, and Scope routes BEFORE project routes to avoid conflicts
 app.use("/api/brands", brandRoutes);
 app.use('/api', threadRoutes); // Handles /api/brands/:brandId/threads
-app.use("/api/scopes", scopeRoutes); // NEW: Scope and Workflow Architecture
+app.use("/api/scopes", scopeRoutes); // Scope and Workflow Architecture
+app.use("/api/scopes", excelUploadRoutes); // ✨ NEW: Excel upload for scopes/workflows
+app.use("/api", excelUploadRoutes); // ✨ NEW: For /api/templates/* routes
 app.use("/api/roles", roleRoutes); // Role management routes
 
 app.use("/api/projects", projectRoutes);
