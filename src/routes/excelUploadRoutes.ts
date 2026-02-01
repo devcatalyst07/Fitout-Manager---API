@@ -99,15 +99,12 @@ router.post(
 
       // Create phases and tasks
       for (const phaseData of phases) {
-        // Create dummy IDs for workflowId and scopeId
-        const dummyId = new mongoose.Types.ObjectId();
-
         // Create phase
         const phase = await Phase.create({
           name: phaseData.name,
           description: phaseData.description || '',
           workflowId,
-          scopeId: dummyId, // Dummy - not used
+          scopeId, // Use actual scopeId from request params
           order: phaseData.order,
           isTemplate: true,
           createdBy: req.user.id,
@@ -124,7 +121,7 @@ router.post(
             order: taskData.order,
             phaseId: phase._id,
             workflowId,
-            scopeId: dummyId, // Dummy - not used
+            scopeId, // Use actual scopeId from request params
             isTemplate: true,
             status: 'Backlog',
             assignees: [], // No assignees for template tasks
