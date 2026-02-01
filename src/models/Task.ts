@@ -85,46 +85,52 @@ const taskSchema = new Schema<ITask>(
       // Only for template tasks
     },
     isTemplate: {
-      type: Boolean,
-      default: false,
-      required: true,
-      validate: {
-        validator: function(value: boolean) {
-          const doc = this as any;
-          if (value) {
-            // Template tasks validation
-            if (!doc.workflowId || !doc.scopeId) {
-              return false;
-            }
-            if (doc.projectId) {
-              return false;
-            }
-          } else {
-            // Project tasks validation
-            if (!doc.projectId) {
-              return false;
-            }
-          }
-          return true;
-        },
-        message: function(props: any) {
-          const doc = props.instance;
-          if (doc.isTemplate) {
-            if (!doc.workflowId || !doc.scopeId) {
-              return 'Template tasks must have workflowId and scopeId';
-            }
-            if (doc.projectId) {
-              return 'Template tasks cannot have projectId';
-            }
-          } else {
-            if (!doc.projectId) {
-              return 'Project tasks must have projectId';
-            }
-          }
-          return 'Invalid task configuration';
+  type: Boolean,
+  default: false,
+  required: true,
+  validate: {
+    validator: function(value: boolean) {
+      const doc = this as any;
+      
+      // Skip validation during updates (only validate on create)
+      if (!doc.isNew) {
+        return true;
+      }
+      
+      if (value) {
+        // Template tasks validation
+        if (!doc.workflowId || !doc.scopeId) {
+          return false;
+        }
+        if (doc.projectId) {
+          return false;
+        }
+      } else {
+        // Project tasks validation
+        if (!doc.projectId) {
+          return false;
         }
       }
+      return true;
     },
+    message: function(props: any) {
+      const doc = props.instance;
+      if (doc.isTemplate) {
+        if (!doc.workflowId || !doc.scopeId) {
+          return 'Template tasks must have workflowId and scopeId';
+        }
+        if (doc.projectId) {
+          return 'Template tasks cannot have projectId';
+        }
+      } else {
+        if (!doc.projectId) {
+          return 'Project tasks must have projectId';
+        }
+      }
+      return 'Invalid task configuration';
+    }
+  }
+},
     order: {
       type: Number,
       default: 0,
