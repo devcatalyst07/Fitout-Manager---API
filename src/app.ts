@@ -22,7 +22,7 @@ import calendarRoutes from "./routes/calendarRoutes";
 import dashboardRoutes from './routes/dashboard.routes';
 import brandRoutes from './routes/brand.routes';
 import roleRoutes from "./routes/role.routes";
-import scopeRoutes from "./routes/scope.routes"; // NEW: Scope routes
+import scopeRoutes from "./routes/scope.routes";
 
 const app = express();
 
@@ -87,9 +87,9 @@ app.use('/api/admin', dashboardRoutes);
 
 // Brand, Thread, and Scope routes BEFORE project routes to avoid conflicts
 app.use("/api/brands", brandRoutes);
-app.use('/api', threadRoutes); // Handles /api/brands/:brandId/threads
-app.use("/api/scopes", scopeRoutes); // NEW: Scope and Workflow Architecture
-app.use("/api/roles", roleRoutes); // Role management routes
+app.use('/api', threadRoutes);
+app.use("/api/scopes", scopeRoutes);
+app.use("/api/roles", roleRoutes);
 
 app.use("/api/projects", projectRoutes);
 app.use("/api/projects", taskRoutes);
