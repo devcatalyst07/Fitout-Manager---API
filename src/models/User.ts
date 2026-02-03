@@ -1,10 +1,14 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import mongoose, { Schema, Document } from "mongoose";
 
 export interface IUser extends Document {
-  name: string;
+  name: string; // kept for backward compat (login token payload, etc.)
+  firstName: string;
+  lastName: string;
+  username: string;
   email: string;
   password: string;
-  role: 'user' | 'admin';
+  role: "user" | "admin";
+  profilePhoto?: string; // Cloudinary secure_url
   subscriptionType?: string;
   totalProjects: number;
   createdAt: Date;
@@ -16,6 +20,21 @@ const UserSchema: Schema = new Schema(
     name: {
       type: String,
       required: true,
+    },
+    firstName: {
+      type: String,
+      default: "",
+    },
+    lastName: {
+      type: String,
+      default: "",
+    },
+    username: {
+      type: String,
+      unique: true,
+      sparse: true, // allows null/undefined on old docs without crashing unique index
+      lowercase: true,
+      trim: true,
     },
     email: {
       type: String,
@@ -29,13 +48,17 @@ const UserSchema: Schema = new Schema(
     },
     role: {
       type: String,
-      enum: ['user', 'admin'],
-      default: 'user',
+      enum: ["user", "admin"],
+      default: "user",
+    },
+    profilePhoto: {
+      type: String, // stores Cloudinary URL
+      default: "",
     },
     subscriptionType: {
       type: String,
-      enum: ['Starter', 'Team', 'Enterprise'],
-      default: 'Starter',
+      enum: ["Starter", "Team", "Enterprise"],
+      default: "Starter",
     },
     totalProjects: {
       type: Number,
@@ -43,8 +66,8 @@ const UserSchema: Schema = new Schema(
     },
   },
   {
-    timestamps: true, // Automatically adds createdAt and updatedAt!
-  }
+    timestamps: true,
+  },
 );
 
-export default mongoose.model<IUser>('User', UserSchema);
+export default mongoose.model<IUser>("User", UserSchema);

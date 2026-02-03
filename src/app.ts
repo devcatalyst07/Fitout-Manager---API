@@ -23,6 +23,7 @@ import dashboardRoutes from './routes/dashboard.routes';
 import brandRoutes from './routes/brand.routes';
 import roleRoutes from "./routes/role.routes";
 import scopeRoutes from "./routes/scope.routes";
+import profileRoutes from "./routes/profile.routes";
 const app = express();
 
 // CORS Configuration
@@ -107,6 +108,7 @@ app.use("/api/tasks", commentRoutes);
 app.use("/api/tasks", activityLogRoutes);
 app.use("/api", uploadRoutes);
 app.use("/api", calendarRoutes);
+app.use("/api/profile", profileRoutes);
 
 // 404 Handler
 app.use((req, res) => {
