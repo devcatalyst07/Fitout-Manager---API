@@ -13,6 +13,121 @@ import mongoose from "mongoose";
 
 const router = Router();
 
+// GET /api/tasks/dashboard - Get all tasks for dashboard widget
+router.get('/dashboard', authMiddleware, async (req, res) => {
+  try {
+    console.log('Dashboard Tasks API called');
+
+    // Fetch all project tasks (isTemplate = false)
+    const tasks = await Task.find({ isTemplate: false })
+      .populate('projectId', 'brand projectName')
+      .sort({ dueDate: 1 }) // Sort by due date ascending
+      .lean();
+
+    // Filter out tasks without project (shouldn't happen, but safety check)
+    const validTasks = tasks.filter(task => task.projectId);
+
+    // Group tasks by brand
+    const tasksByBrand: Record<string, any[]> = {};
+    const now = new Date();
+
+    validTasks.forEach(task => {
+      const brand = (task.projectId as any).brand;
+      const projectName = (task.projectId as any).projectName;
+      const dueDate = task.dueDate ? new Date(task.dueDate) : null;
+
+      // Determine task category
+      let category: 'upcoming' | 'overdue' | 'completed';
+      
+      if (task.status === 'Done') {
+        category = 'completed';
+      } else if (dueDate && dueDate < now) {
+        category = 'overdue';
+      } else {
+        category = 'upcoming';
+      }
+
+      // Format task data
+      const formattedTask = {
+        _id: task._id,
+        title: task.title,
+        description: task.description,
+        status: task.status,
+        priority: task.priority,
+        dueDate: task.dueDate,
+        progress: task.progress,
+        assignees: task.assignees,
+        brand,
+        projectName,
+        projectId: (task.projectId as any)._id,
+        category,
+        createdAt: task.createdAt,
+        updatedAt: task.updatedAt,
+      };
+
+      // Group by brand
+      if (!tasksByBrand[brand]) {
+        tasksByBrand[brand] = [];
+      }
+      tasksByBrand[brand].push(formattedTask);
+    });
+
+    // Get list of unique brands
+    const brands = Object.keys(tasksByBrand).sort();
+
+    // Calculate counts
+    const totalTasks = validTasks.length;
+    const upcomingCount = validTasks.filter(t => {
+      const dueDate = t.dueDate ? new Date(t.dueDate) : null;
+      return t.status !== 'Done' && (!dueDate || dueDate >= now);
+    }).length;
+    const overdueCount = validTasks.filter(t => {
+      const dueDate = t.dueDate ? new Date(t.dueDate) : null;
+      return t.status !== 'Done' && dueDate && dueDate < now;
+    }).length;
+    const completedCount = validTasks.filter(t => t.status === 'Done').length;
+
+    console.log(`Found ${totalTasks} tasks across ${brands.length} brands`);
+
+    res.json({
+      tasks: validTasks.map(task => ({
+        _id: task._id,
+        title: task.title,
+        description: task.description,
+        status: task.status,
+        priority: task.priority,
+        dueDate: task.dueDate,
+        progress: task.progress,
+        assignees: task.assignees,
+        brand: (task.projectId as any).brand,
+        projectName: (task.projectId as any).projectName,
+        projectId: (task.projectId as any)._id,
+        category: task.status === 'Done' 
+          ? 'completed' 
+          : (task.dueDate && new Date(task.dueDate) < now) 
+            ? 'overdue' 
+            : 'upcoming',
+        createdAt: task.createdAt,
+        updatedAt: task.updatedAt,
+      })),
+      tasksByBrand,
+      brands,
+      summary: {
+        total: totalTasks,
+        upcoming: upcomingCount,
+        overdue: overdueCount,
+        completed: completedCount,
+      }
+    });
+  } catch (error: any) {
+    console.error('Dashboard tasks error:', error);
+    res.status(500).json({ 
+      message: 'Failed to fetch dashboard tasks',
+      error: error.message 
+    });
+  }
+});
+
 // ==================== PROJECT TASK ROUTES ====================
 
 // GET all tasks for a project (grouped by phase)
