@@ -7,6 +7,62 @@ import Brand from "../models/Brand";
 const router = Router();
 
 // ============================================
+// GET /api/projects/stats - Get overall project statistics
+// ✅ Returns stats for all projects (admin) or assigned projects (users)
+// ⚠️ MUST BE BEFORE /:id ROUTE
+// ============================================
+router.get("/stats", authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    console.log("📊 GET /api/projects/stats - User role:", req.user.role);
+
+    let projectFilter: any = {};
+
+    if (req.user.role === "admin") {
+      // Admin sees all projects
+      projectFilter = {};
+    } else {
+      // User sees only assigned projects
+      const teamMembers = await TeamMember.find({
+        userId: req.user.id,
+        status: "active",
+      });
+
+      const projectIds = teamMembers.map((tm: any) => tm.projectId);
+
+      if (projectIds.length === 0) {
+        console.log("⚠️ User has no assigned projects");
+        return res.json({
+          total: 0,
+          active: 0,
+          completed: 0,
+          planning: 0,
+        });
+      }
+
+      projectFilter._id = { $in: projectIds };
+    }
+
+    const projects = await Project.find(projectFilter);
+
+    const stats = {
+      total: projects.length,
+      active: projects.filter((p: any) => p.status === "In Progress").length,
+      completed: projects.filter((p: any) => p.status === "Completed").length,
+      planning: projects.filter((p: any) => p.status === "Planning").length,
+    };
+
+    console.log("✅ Stats calculated:", stats);
+    res.json(stats);
+  } catch (error: any) {
+    console.error("❌ Get stats error:", error);
+    res.status(500).json({
+      message: "Failed to fetch stats",
+      error: error.message,
+    });
+  }
+});
+
+// ============================================
 // GET /api/projects - Get all projects
 // ✅ UPDATED: Filter based on user role
 // Admin sees all, users see only assigned projects
