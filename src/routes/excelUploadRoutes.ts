@@ -1,347 +1,672 @@
-import { Router } from "express";
-import { authMiddleware, AuthRequest } from "../middleware/auth";
-import { requirePermission } from "../middleware/permissions";
-import multer from "multer";
-import * as XLSX from "xlsx";
-import path from "path";
-import fs from "fs";
-import Phase from "../models/Phase";
-import Task from "../models/Task";
-import mongoose from "mongoose";
+import express, { Request, Response } from 'express';
+import multer from 'multer';
+import XLSX from 'xlsx';
+import { authMiddleware } from '../middleware/auth'; // Changed from 'authenticate'
+import Task from '../models/Task';
+import Phase from '../models/Phase';
+import ExcelJS from 'exceljs';
 
-const router = Router();
+const router = express.Router();
 
 // Configure multer for file uploads
+const storage = multer.memoryStorage();
 const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB limit
-  },
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
   fileFilter: (req, file, cb) => {
     const allowedTypes = [
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'application/vnd.ms-excel',
-      'text/csv'
     ];
-    
-    if (allowedTypes.includes(file.mimetype) || 
-        file.originalname.match(/\.(xlsx|xls|csv)$/)) {
+    if (allowedTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error('Only Excel (.xlsx, .xls) and CSV files are allowed'));
+      cb(new Error('Invalid file type. Only .xlsx and .xls files are allowed.'));
     }
-  }
+  },
 });
 
-// ==================== PARSE EXCEL FILE ====================
+/**
+ * POST /api/scopes/:scopeId/workflows/:workflowId/tasks/bulk-upload
+ * Upload Excel file to bulk create template tasks for a workflow
+ */
 router.post(
-  "/:scopeId/workflows/:workflowId/parse-excel",
-  authMiddleware,
-  requirePermission("projects-task-create"),
+  '/scopes/:scopeId/workflows/:workflowId/tasks/bulk-upload',
+  authMiddleware, // Changed from 'authenticate'
   upload.single('file'),
-  async (req: AuthRequest, res) => {
+  async (req: Request, res: Response): Promise<any> => {
     try {
-      if (!req.file) {
-        return res.status(400).json({ message: "No file uploaded" });
-      }
-
       const { scopeId, workflowId } = req.params;
 
-      // Parse the Excel file
+      if (!req.file) {
+        return res.status(400).json({ message: 'No file uploaded' });
+      }
+
+      // Parse Excel file
       const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-      
-      // Use first sheet
       const sheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[sheetName];
-      
-      // Convert to JSON with header row
-      const jsonData: any[] = XLSX.utils.sheet_to_json(worksheet, { 
-        header: 1,
-        defval: '',
-        blankrows: false
-      });
+      const jsonData: any[] = XLSX.utils.sheet_to_json(worksheet);
 
-      if (jsonData.length < 2) {
-        return res.status(400).json({ 
-          message: "File must contain at least a header row and one data row" 
+      if (jsonData.length === 0) {
+        return res.status(400).json({ message: 'Excel file is empty' });
+      }
+
+      // Validate required columns (NEW FORMAT)
+      const requiredColumns = [
+        'Task ID',
+        'Phase Name',
+        'Task Title',
+        'Task Description',
+        'Task Type',
+        'Priority',
+        'Predecessor IDs',
+        'Dependency Type',
+        'Lag (Days)',
+        'Duration (Days)',
+      ];
+
+      const firstRow = jsonData[0];
+      const actualColumns = Object.keys(firstRow);
+      const missingColumns = requiredColumns.filter(
+        (col) => !actualColumns.includes(col)
+      );
+
+      if (missingColumns.length > 0) {
+        return res.status(400).json({
+          message: `Missing required columns: ${missingColumns.join(', ')}. Please download the latest template.`,
         });
       }
 
-      // Parse the data into phases and tasks
-      const result = parseExcelData(jsonData);
+      // Group tasks by phase
+      const phaseMap = new Map<string, any[]>();
+      const taskIdMap: Record<string, string> = {}; // Map template Task ID to created task _id
 
-      res.json(result);
-    } catch (error: any) {
-      console.error("Parse Excel error:", error);
-      res.status(500).json({ 
-        message: "Failed to parse Excel file", 
-        error: error.message 
-      });
-    }
-  }
-);
+      for (const row of jsonData) {
+        const phaseName = row['Phase Name'];
+        if (!phaseName) continue;
 
-// ==================== BULK CREATE PHASES AND TASKS ====================
-router.post(
-  "/:scopeId/workflows/:workflowId/bulk-create",
-  authMiddleware,
-  requirePermission("projects-task-create"),
-  async (req: AuthRequest, res) => {
-    try {
-      const { scopeId, workflowId } = req.params;
-      const { phases } = req.body;
-
-      if (!phases || !Array.isArray(phases) || phases.length === 0) {
-        return res.status(400).json({ message: "No phases provided" });
+        if (!phaseMap.has(phaseName)) {
+          phaseMap.set(phaseName, []);
+        }
+        phaseMap.get(phaseName)!.push(row);
       }
 
-      const createdPhases = [];
+      let phasesCreated = 0;
+      let tasksCreated = 0;
 
-      // Create phases and tasks
-      for (const phaseData of phases) {
+      // First Pass: Create phases and tasks (without dependencies)
+      for (const [phaseName, tasks] of phaseMap.entries()) {
         // Create phase
         const phase = await Phase.create({
-          name: phaseData.name,
-          description: phaseData.description || '',
+          name: phaseName,
+          description: `Phase for ${phaseName}`,
+          order: phasesCreated,
           workflowId,
-          scopeId, // Use actual scopeId from request params
-          order: phaseData.order,
+          scopeId,
           isTemplate: true,
-          createdBy: req.user.id,
         });
 
+        phasesCreated++;
+
         // Create tasks for this phase
-        const createdTasks = [];
-        for (const taskData of phaseData.tasks) {
+        for (const row of tasks) {
+          const taskId = row['Task ID'];
+          const taskTitle = row['Task Title'];
+          const taskDescription = row['Task Description'] || '';
+          const taskType = row['Task Type'] || 'Task';
+          const priority = row['Priority'] || 'Medium';
+          const duration = parseFloat(row['Duration (Days)']) || 1;
+
+          // Validate task type
+          if (!['Task', 'Deliverable', 'Milestone'].includes(taskType)) {
+            console.warn(
+              `Invalid task type "${taskType}" for task ${taskId}. Defaulting to "Task".`
+            );
+          }
+
+          // Validate priority
+          if (!['Low', 'Medium', 'High', 'Critical'].includes(priority)) {
+            console.warn(
+              `Invalid priority "${priority}" for task ${taskId}. Defaulting to "Medium".`
+            );
+          }
+
+          // Validate milestone duration
+          if (taskType === 'Milestone' && duration > 1) {
+            return res.status(400).json({
+              message: `Task ${taskId}: Milestone tasks can have a maximum duration of 1 day`,
+            });
+          }
+
+          // Create task (without dependencies initially)
           const task = await Task.create({
-            title: taskData.title,
-            description: taskData.description || '',
-            priority: taskData.priority || 'Medium',
-            estimateHours: taskData.estimateHours,
-            order: taskData.order,
+            title: taskTitle,
+            description: taskDescription,
+            status: 'Backlog',
+            priority: ['Low', 'Medium', 'High', 'Critical'].includes(priority)
+              ? priority
+              : 'Medium',
+            taskType: ['Task', 'Deliverable', 'Milestone'].includes(taskType)
+              ? taskType
+              : 'Task',
+            assignees: [],
+            progress: 0,
+            duration,
+            dependencies: [], // Will be populated in second pass
             phaseId: phase._id,
             workflowId,
-            scopeId, // Use actual scopeId from request params
+            scopeId,
             isTemplate: true,
-            status: 'Backlog',
-            assignees: [], // No assignees for template tasks
-            progress: 0,
-            createdBy: req.user.id,
           });
-          createdTasks.push(task);
+
+          // Map template Task ID to created task _id
+          taskIdMap[taskId] = task._id.toString();
+          tasksCreated++;
+        }
+      }
+
+      // Second Pass: Update dependencies using taskIdMap
+      for (const row of jsonData) {
+        const taskId = row['Task ID'];
+        const predecessorIds = row['Predecessor IDs'];
+        const dependencyType = row['Dependency Type'];
+
+        if (!taskId || !taskIdMap[taskId]) {
+          continue;
         }
 
-        createdPhases.push({
-          ...phase.toObject(),
-          tasks: createdTasks,
+        const dependencies: { taskId: string; type: 'FS' | 'SS' }[] = [];
+
+        if (predecessorIds) {
+          const predIds = predecessorIds
+            .toString()
+            .split(';')
+            .map((s: string) => s.trim())
+            .filter(Boolean);
+          const depTypes = dependencyType
+            ? dependencyType
+                .toString()
+                .split(';')
+                .map((s: string) => s.trim())
+                .filter(Boolean)
+            : [];
+
+          predIds.forEach((predId: string, index: number) => {
+            const type = depTypes[index] || 'FS'; // Default to FS if not specified
+            if (!['FS', 'SS'].includes(type)) {
+              console.warn(
+                `Invalid dependency type "${type}" for task ${taskId}. Defaulting to FS.`
+              );
+            }
+            dependencies.push({
+              taskId: taskIdMap[predId],
+              type: type === 'SS' ? 'SS' : 'FS',
+            });
+          });
+        }
+
+        // Update the task with dependencies
+        await Task.findByIdAndUpdate(taskIdMap[taskId], {
+          dependencies,
         });
       }
 
       res.status(201).json({
-        message: `Successfully created ${createdPhases.length} phases with ${
-          createdPhases.reduce((sum, p) => sum + p.tasks.length, 0)
-        } tasks`,
-        phases: createdPhases,
+        message: 'Tasks uploaded successfully',
+        phasesCreated,
+        tasksCreated,
       });
     } catch (error: any) {
-      console.error("Bulk create error:", error);
-      res.status(500).json({ 
-        message: "Failed to create phases and tasks", 
-        error: error.message 
+      console.error('Bulk upload error:', error);
+      res.status(500).json({
+        message: error.message || 'Failed to upload tasks',
       });
     }
   }
 );
 
-// ==================== DOWNLOAD TEMPLATE ====================
-router.get("/templates/task-upload-template.xlsx", (req, res) => {
-  // Generate template file
-  const templateData = [
-    ['Phase Name', 'Task Title', 'Task Description', 'Priority', 'Estimate Hours'],
-    ['Planning', 'Initial site survey', 'Conduct comprehensive site survey and documentation', 'High', 8],
-    ['Planning', 'Feasibility study', 'Analyze technical and financial feasibility', 'High', 16],
-    ['Planning', 'Create project timeline', 'Develop detailed project schedule with milestones', 'Medium', 4],
-    ['', '', '', '', ''],
-    ['Design', 'Conceptual design', 'Create initial design concepts and mood boards', 'High', 24],
-    ['Design', 'Technical drawings', 'Prepare detailed technical and construction drawings', 'Critical', 40],
-    ['Design', 'Material selection', 'Select and specify all materials and finishes', 'Medium', 16],
-    ['', '', '', '', ''],
-    ['Procurement', 'Vendor selection', 'Research and select qualified vendors', 'High', 12],
-    ['Procurement', 'Purchase orders', 'Create and process all purchase orders', 'Medium', 8],
-    ['Procurement', 'Material tracking', 'Track delivery schedules and material arrival', 'Low', 4],
-    ['', '', '', '', ''],
-    ['Construction', 'Site preparation', 'Prepare site for construction work', 'High', 16],
-    ['Construction', 'Structural work', 'Complete all structural modifications', 'Critical', 80],
-    ['Construction', 'MEP installation', 'Install mechanical, electrical, and plumbing systems', 'Critical', 120],
-    ['Construction', 'Finishes installation', 'Install all finishes, fixtures, and fittings', 'High', 60],
-    ['Construction', 'Quality inspection', 'Conduct quality checks and punch list items', 'High', 16],
-  ];
+/**
+ * GET /api/scopes/:scopeId/workflows/:workflowId/templates/task-upload-template.xlsx
+ * Download Excel template for bulk task upload (NEW FORMAT)
+ */
+router.get(
+  '/scopes/:scopeId/workflows/:workflowId/templates/task-upload-template.xlsx',
+  authMiddleware, // Changed from 'authenticate'
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Tasks');
 
-  const ws = XLSX.utils.aoa_to_sheet(templateData);
-  
-  // Set column widths
-  ws['!cols'] = [
-    { wch: 20 }, // Phase Name
-    { wch: 30 }, // Task Title
-    { wch: 50 }, // Task Description
-    { wch: 12 }, // Priority
-    { wch: 15 }, // Estimate Hours
-  ];
+      // Define columns (NEW FORMAT)
+      worksheet.columns = [
+        { header: 'Task ID', key: 'taskId', width: 12 },
+        { header: 'Phase Name', key: 'phaseName', width: 20 },
+        { header: 'Task Title', key: 'taskTitle', width: 40 },
+        { header: 'Task Description', key: 'taskDescription', width: 50 },
+        { header: 'Task Type', key: 'taskType', width: 15 },
+        { header: 'Priority', key: 'priority', width: 12 },
+        { header: 'Predecessor IDs', key: 'predecessorIds', width: 20 },
+        { header: 'Dependency Type', key: 'dependencyType', width: 18 },
+        { header: 'Lag (Days)', key: 'lagDays', width: 12 },
+        { header: 'Duration (Days)', key: 'duration', width: 15 },
+      ];
 
-  // Merge cells for phase names (rows with same phase)
-  const merges = [];
-  let currentPhase = '';
-  let startRow = 1;
-
-  for (let i = 1; i < templateData.length; i++) {
-    const phaseName = templateData[i][0];
-    
-    if (phaseName && phaseName !== currentPhase) {
-      if (currentPhase && i > startRow + 1) {
-        merges.push({ s: { r: startRow, c: 0 }, e: { r: i - 1, c: 0 } });
-      }
-      currentPhase = phaseName.toString();
-      startRow = i;
-    }
-  }
-  
-  ws['!merges'] = merges;
-
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Tasks Template');
-
-  // Write to buffer
-  const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-
-  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', 'attachment; filename=task-upload-template.xlsx');
-  res.send(buffer);
-});
-
-// ==================== HELPER FUNCTIONS ====================
-
-interface ParsedPhase {
-  name: string;
-  description?: string;
-  order: number;
-  tasks: ParsedTask[];
-}
-
-interface ParsedTask {
-  title: string;
-  description?: string;
-  priority: 'Low' | 'Medium' | 'High' | 'Critical';
-  estimateHours?: number;
-  order: number;
-}
-
-interface ParseResult {
-  phases: ParsedPhase[];
-  errors: string[];
-  warnings: string[];
-}
-
-function parseExcelData(data: any[][]): ParseResult {
-  const phases: ParsedPhase[] = [];
-  const errors: string[] = [];
-  const warnings: string[] = [];
-
-  // Skip header row
-  let currentPhase: ParsedPhase | null = null;
-  let phaseOrder = 0;
-  let taskOrder = 0;
-
-  for (let i = 1; i < data.length; i++) {
-    const row = data[i];
-    const rowNum = i + 1;
-
-    // Skip empty rows
-    if (!row || row.every(cell => !cell || cell.toString().trim() === '')) {
-      continue;
-    }
-
-    const [phaseName, taskTitle, taskDesc, priority, estimateHours] = row;
-
-    // Check if this is a new phase
-    if (phaseName && phaseName.toString().trim()) {
-      // Save previous phase if exists
-      if (currentPhase && currentPhase.tasks.length > 0) {
-        phases.push(currentPhase);
-      }
-
-      // Start new phase
-      currentPhase = {
-        name: phaseName.toString().trim(),
-        order: phaseOrder++,
-        tasks: [],
+      // Style header row
+      const headerRow = worksheet.getRow(1);
+      headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      headerRow.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FF4472C4' },
       };
-      taskOrder = 0;
-    }
+      headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
+      headerRow.height = 20;
 
-    // Validate task title
-    if (!taskTitle || !taskTitle.toString().trim()) {
-      errors.push(`Row ${rowNum}: Task title is required`);
-      continue;
-    }
+      // Add sample data with dependencies
+      const sampleData = [
+        // Planning Phase
+        {
+          taskId: 'W001',
+          phaseName: 'Planning',
+          taskTitle: 'Initial Site Survey',
+          taskDescription: 'Conduct comprehensive site assessment and measurements',
+          taskType: 'Task',
+          priority: 'High',
+          predecessorIds: '',
+          dependencyType: '',
+          lagDays: 0,
+          duration: 8,
+        },
+        {
+          taskId: 'W002',
+          phaseName: 'Planning',
+          taskTitle: 'Feasibility Study',
+          taskDescription: 'Analyze project feasibility including costs and timeline',
+          taskType: 'Deliverable',
+          priority: 'High',
+          predecessorIds: 'W001',
+          dependencyType: 'FS',
+          lagDays: 0,
+          duration: 16,
+        },
+        {
+          taskId: 'W003',
+          phaseName: 'Planning',
+          taskTitle: 'Budget Approval',
+          taskDescription: 'Obtain budget approval from stakeholders',
+          taskType: 'Milestone',
+          priority: 'Critical',
+          predecessorIds: 'W002',
+          dependencyType: 'FS',
+          lagDays: 0,
+          duration: 1,
+        },
 
-    if (!currentPhase) {
-      errors.push(`Row ${rowNum}: Task must belong to a phase`);
-      continue;
-    }
+        // Design Phase
+        {
+          taskId: 'W004',
+          phaseName: 'Design',
+          taskTitle: 'Schematic Design',
+          taskDescription: 'Create initial design concepts and layouts',
+          taskType: 'Task',
+          priority: 'High',
+          predecessorIds: 'W003',
+          dependencyType: 'FS',
+          lagDays: 0,
+          duration: 20,
+        },
+        {
+          taskId: 'W005',
+          phaseName: 'Design',
+          taskTitle: 'Design Development',
+          taskDescription: 'Develop detailed design specifications',
+          taskType: 'Task',
+          priority: 'High',
+          predecessorIds: 'W004',
+          dependencyType: 'FS',
+          lagDays: 0,
+          duration: 20,
+        },
+        {
+          taskId: 'W006',
+          phaseName: 'Design',
+          taskTitle: 'Construction Documents',
+          taskDescription: 'Prepare detailed construction drawings and specifications',
+          taskType: 'Deliverable',
+          priority: 'High',
+          predecessorIds: 'W005',
+          dependencyType: 'FS',
+          lagDays: 0,
+          duration: 24,
+        },
+        {
+          taskId: 'W007',
+          phaseName: 'Design',
+          taskTitle: 'Design Approval',
+          taskDescription: 'Obtain final design approval from client',
+          taskType: 'Milestone',
+          priority: 'Critical',
+          predecessorIds: 'W006',
+          dependencyType: 'FS',
+          lagDays: 0,
+          duration: 1,
+        },
 
-    // Validate priority
-    const validPriorities = ['Low', 'Medium', 'High', 'Critical'];
-    let taskPriority: 'Low' | 'Medium' | 'High' | 'Critical' = 'Medium';
-    
-    if (priority && priority.toString().trim()) {
-      const priorityStr = priority.toString().trim();
-      const matchedPriority = validPriorities.find(
-        p => p.toLowerCase() === priorityStr.toLowerCase()
-      );
+        // Procurement Phase
+        {
+          taskId: 'W008',
+          phaseName: 'Procurement',
+          taskTitle: 'Prepare Tender Documents',
+          taskDescription: 'Compile specifications and drawings for tender',
+          taskType: 'Task',
+          priority: 'High',
+          predecessorIds: 'W007',
+          dependencyType: 'FS',
+          lagDays: 0,
+          duration: 8,
+        },
+        {
+          taskId: 'W009',
+          phaseName: 'Procurement',
+          taskTitle: 'Vendor Selection',
+          taskDescription: 'Review bids and select contractors',
+          taskType: 'Task',
+          priority: 'High',
+          predecessorIds: 'W006;W007',
+          dependencyType: 'FS;FS',
+          lagDays: 0,
+          duration: 12,
+        },
+        {
+          taskId: 'W010',
+          phaseName: 'Procurement',
+          taskTitle: 'Contract Award',
+          taskDescription: 'Finalize and award construction contracts',
+          taskType: 'Milestone',
+          priority: 'Critical',
+          predecessorIds: 'W009',
+          dependencyType: 'FS',
+          lagDays: 0,
+          duration: 1,
+        },
+
+        // Construction Phase
+        {
+          taskId: 'W011',
+          phaseName: 'Construction',
+          taskTitle: 'Site Mobilization',
+          taskDescription: 'Set up site facilities and prepare for construction',
+          taskType: 'Task',
+          priority: 'High',
+          predecessorIds: 'W010',
+          dependencyType: 'FS',
+          lagDays: 0,
+          duration: 8,
+        },
+        {
+          taskId: 'W012',
+          phaseName: 'Construction',
+          taskTitle: 'Demolition Works',
+          taskDescription: 'Remove existing fixtures and prepare space',
+          taskType: 'Task',
+          priority: 'High',
+          predecessorIds: 'W011',
+          dependencyType: 'FS',
+          lagDays: 0,
+          duration: 10,
+        },
+        {
+          taskId: 'W013',
+          phaseName: 'Construction',
+          taskTitle: 'MEP Rough-in',
+          taskDescription: 'Install mechanical, electrical, and plumbing systems',
+          taskType: 'Task',
+          priority: 'High',
+          predecessorIds: 'W012',
+          dependencyType: 'FS',
+          lagDays: 0,
+          duration: 20,
+        },
+        {
+          taskId: 'W014',
+          phaseName: 'Construction',
+          taskTitle: 'Partition Walls',
+          taskDescription: 'Construct partition walls and framing',
+          taskType: 'Task',
+          priority: 'Medium',
+          predecessorIds: 'W012',
+          dependencyType: 'FS',
+          lagDays: 0,
+          duration: 15,
+        },
+        {
+          taskId: 'W015',
+          phaseName: 'Construction',
+          taskTitle: 'Ceiling Installation',
+          taskDescription: 'Install suspended ceiling systems',
+          taskType: 'Task',
+          priority: 'Medium',
+          predecessorIds: 'W013;W014',
+          dependencyType: 'FS;FS',
+          lagDays: 0,
+          duration: 12,
+        },
+        {
+          taskId: 'W016',
+          phaseName: 'Construction',
+          taskTitle: 'Flooring Installation',
+          taskDescription: 'Install floor finishes',
+          taskType: 'Task',
+          priority: 'Medium',
+          predecessorIds: 'W013',
+          dependencyType: 'FS',
+          lagDays: 0,
+          duration: 10,
+        },
+        {
+          taskId: 'W017',
+          phaseName: 'Construction',
+          taskTitle: 'Interior Finishes',
+          taskDescription: 'Paint and install final finishes',
+          taskType: 'Task',
+          priority: 'Medium',
+          predecessorIds: 'W015;W016',
+          dependencyType: 'FS;FS',
+          lagDays: 0,
+          duration: 15,
+        },
+
+        // Handover Phase
+        {
+          taskId: 'W018',
+          phaseName: 'Handover',
+          taskTitle: 'MEP Testing & Commissioning',
+          taskDescription: 'Test all mechanical, electrical, and plumbing systems',
+          taskType: 'Task',
+          priority: 'Critical',
+          predecessorIds: 'W017',
+          dependencyType: 'FS',
+          lagDays: 0,
+          duration: 8,
+        },
+        {
+          taskId: 'W019',
+          phaseName: 'Handover',
+          taskTitle: 'Defects Inspection',
+          taskDescription: 'Conduct thorough inspection and create snag list',
+          taskType: 'Task',
+          priority: 'High',
+          predecessorIds: 'W018',
+          dependencyType: 'FS',
+          lagDays: 0,
+          duration: 5,
+        },
+        {
+          taskId: 'W020',
+          phaseName: 'Handover',
+          taskTitle: 'Rectification Works',
+          taskDescription: 'Complete all defect rectifications',
+          taskType: 'Task',
+          priority: 'High',
+          predecessorIds: 'W019',
+          dependencyType: 'FS',
+          lagDays: 0,
+          duration: 10,
+        },
+        {
+          taskId: 'W021',
+          phaseName: 'Handover',
+          taskTitle: 'Final Documentation',
+          taskDescription: 'Prepare as-built drawings and O&M manuals',
+          taskType: 'Deliverable',
+          priority: 'High',
+          predecessorIds: 'W018',
+          dependencyType: 'SS',
+          lagDays: 0,
+          duration: 8,
+        },
+        {
+          taskId: 'W022',
+          phaseName: 'Handover',
+          taskTitle: 'Project Handover',
+          taskDescription: 'Official handover to client',
+          taskType: 'Milestone',
+          priority: 'Critical',
+          predecessorIds: 'W020;W021',
+          dependencyType: 'FS;FS',
+          lagDays: 0,
+          duration: 1,
+        },
+      ];
+
+      // Add data rows
+      sampleData.forEach((data) => {
+        const row = worksheet.addRow(data);
+        row.alignment = { vertical: 'middle', wrapText: true };
+
+        // Color code by task type
+        if (data.taskType === 'Milestone') {
+          row.getCell('taskType').fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFD4EDDA' },
+          };
+        } else if (data.taskType === 'Deliverable') {
+          row.getCell('taskType').fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFCFE2FF' },
+          };
+        }
+      });
+
+      // Add instructions sheet
+      const instructionsSheet = workbook.addWorksheet('Instructions');
+      instructionsSheet.columns = [
+        { header: 'Column', key: 'column', width: 20 },
+        { header: 'Description', key: 'description', width: 60 },
+        { header: 'Valid Values', key: 'validValues', width: 30 },
+      ];
+
+      const instructions = [
+        {
+          column: 'Task ID',
+          description: 'Unique identifier for the task (e.g., W001, W002). Used for referencing in dependencies.',
+          validValues: 'Any unique alphanumeric string',
+        },
+        {
+          column: 'Phase Name',
+          description: 'Name of the project phase this task belongs to.',
+          validValues: 'Any text (e.g., Planning, Design, Construction)',
+        },
+        {
+          column: 'Task Title',
+          description: 'Short, descriptive title for the task.',
+          validValues: 'Any text',
+        },
+        {
+          column: 'Task Description',
+          description: 'Detailed description of what the task involves.',
+          validValues: 'Any text',
+        },
+        {
+          column: 'Task Type',
+          description: 'Type of task. Task=regular work, Deliverable=produces output, Milestone=key checkpoint (max 1 day).',
+          validValues: 'Task, Deliverable, Milestone',
+        },
+        {
+          column: 'Priority',
+          description: 'Importance level of the task.',
+          validValues: 'Low, Medium, High, Critical',
+        },
+        {
+          column: 'Predecessor IDs',
+          description: 'Task IDs that must be completed before this task can start. Separate multiple IDs with semicolons.',
+          validValues: 'Task IDs separated by ; (e.g., W001;W002)',
+        },
+        {
+          column: 'Dependency Type',
+          description: 'Type of dependency relationship. FS=Finish-to-Start, SS=Start-to-Start. Must match number of predecessor IDs.',
+          validValues: 'FS, SS (separated by ; if multiple)',
+        },
+        {
+          column: 'Lag (Days)',
+          description: 'Number of days delay between predecessor completion and this task start. (Not yet implemented)',
+          validValues: 'Number (currently ignored)',
+        },
+        {
+          column: 'Duration (Days)',
+          description: 'Number of working days required to complete the task (Monday-Friday, excludes weekends).',
+          validValues: 'Positive number (Milestones max 1)',
+        },
+      ];
+
+      instructionsSheet.getRow(1).font = { bold: true };
+      instructionsSheet.getRow(1).fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FF4472C4' },
+      };
+
+      instructions.forEach((instruction) => {
+        const row = instructionsSheet.addRow(instruction);
+        row.alignment = { vertical: 'top', wrapText: true };
+      });
+
+      // Add notes
+      instructionsSheet.addRow([]);
+      instructionsSheet.addRow(['IMPORTANT NOTES:', '', '']);
+      instructionsSheet.getCell('A' + instructionsSheet.rowCount).font = { bold: true, size: 12 };
       
-      if (matchedPriority) {
-        taskPriority = matchedPriority as 'Low' | 'Medium' | 'High' | 'Critical';
-      } else {
-        warnings.push(
-          `Row ${rowNum}: Invalid priority "${priorityStr}", defaulting to Medium`
-        );
-      }
+      instructionsSheet.addRow(['• Task IDs must be unique within the workflow', '', '']);
+      instructionsSheet.addRow(['• Predecessor IDs must reference valid Task IDs in the same file', '', '']);
+      instructionsSheet.addRow(['• Milestone tasks can have a maximum duration of 1 day', '', '']);
+      instructionsSheet.addRow(['• Dependencies can reference tasks in different phases', '', '']);
+      instructionsSheet.addRow(['• FS (Finish-Start): Task starts after predecessor finishes', '', '']);
+      instructionsSheet.addRow(['• SS (Start-Start): Task starts when predecessor starts', '', '']);
+      instructionsSheet.addRow(['• Duration is in working days (Monday-Friday, excludes weekends)', '', '']);
+
+      // Set response headers
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      );
+      res.setHeader(
+        'Content-Disposition',
+        'attachment; filename=task-upload-template.xlsx'
+      );
+
+      // Write to response
+      await workbook.xlsx.write(res);
+      res.end();
+    } catch (error: any) {
+      console.error('Template download error:', error);
+      res.status(500).json({
+        message: error.message || 'Failed to generate template',
+      });
     }
-
-    // Parse estimate hours
-    let hours: number | undefined;
-    if (estimateHours) {
-      const parsed = parseFloat(estimateHours.toString());
-      if (!isNaN(parsed) && parsed >= 0) {
-        hours = parsed;
-      } else {
-        warnings.push(
-          `Row ${rowNum}: Invalid estimate hours "${estimateHours}", ignoring`
-        );
-      }
-    }
-
-    // Add task to current phase
-    currentPhase.tasks.push({
-      title: taskTitle.toString().trim(),
-      description: taskDesc ? taskDesc.toString().trim() : undefined,
-      priority: taskPriority,
-      estimateHours: hours,
-      order: taskOrder++,
-    });
   }
-
-  // Add the last phase
-  if (currentPhase && currentPhase.tasks.length > 0) {
-    phases.push(currentPhase);
-  }
-
-  // Validation
-  if (phases.length === 0) {
-    errors.push('No valid phases found in the file');
-  }
-
-  return { phases, errors, warnings };
-}
+);
 
 export default router;

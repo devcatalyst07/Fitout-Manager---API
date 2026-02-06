@@ -2,27 +2,27 @@ import Phase from '../models/Phase';
 import Task from '../models/Task';
 import Workflow from '../models/Workflow';
 import Scope from '../models/Scope';
+import Project from '../models/Projects';
 import mongoose from 'mongoose';
+import { calculateProjectSchedule } from './schedulingService';
 
 /**
- * Copy all template phases and tasks from a workflow to a project
- * This creates actual project phases and tasks based on the template
+ * Copy all template phases and tasks from a workflow to a project with proper scheduling
  */
 export const copyWorkflowTemplatesToProject = async (
   projectId: mongoose.Types.ObjectId | string,
   scopeName: string,
   workflowName: string,
-  userId: mongoose.Types.ObjectId | string
+  userId: mongoose.Types.ObjectId | string,
+  scheduleAnchor: { date: Date; from: 'start' | 'end' }
 ): Promise<{ phasesCreated: number; tasksCreated: number }> => {
   try {
-    // Find the scope
     const scope = await Scope.findOne({ name: scopeName, isActive: true });
     if (!scope) {
       console.log(`Scope "${scopeName}" not found`);
       return { phasesCreated: 0, tasksCreated: 0 };
     }
 
-    // Find the workflow
     const workflow = await Workflow.findOne({
       name: workflowName,
       scopeId: scope._id,
@@ -34,7 +34,6 @@ export const copyWorkflowTemplatesToProject = async (
       return { phasesCreated: 0, tasksCreated: 0 };
     }
 
-    // Find all template phases for this workflow
     const templatePhases = await Phase.find({
       workflowId: workflow._id,
       scopeId: scope._id,
@@ -47,10 +46,10 @@ export const copyWorkflowTemplatesToProject = async (
     }
 
     let totalTasksCreated = 0;
+    const templateToProjectTaskMap = new Map<string, string>();
 
-    // For each template phase, create a project phase and copy its tasks
+    // Create phases and tasks
     for (const templatePhase of templatePhases) {
-      // Create project phase (copy of template)
       const projectPhase = await Phase.create({
         name: templatePhase.name,
         description: templatePhase.description,
@@ -58,41 +57,113 @@ export const copyWorkflowTemplatesToProject = async (
         scopeId: templatePhase.scopeId,
         order: templatePhase.order,
         color: templatePhase.color,
-        isTemplate: false, // This is a project phase, not a template
+        isTemplate: false,
         projectId: projectId,
         createdBy: userId,
       });
 
-      // Find all template tasks for this phase
       const templateTasks = await Task.find({
         phaseId: templatePhase._id,
         isTemplate: true,
       }).sort({ order: 1 });
 
-      // Create project tasks (copies of templates)
       for (const templateTask of templateTasks) {
-        await Task.create({
+        const projectTask = await Task.create({
           title: templateTask.title,
           description: templateTask.description,
-          status: 'Backlog', // New tasks start in Backlog
+          status: 'Backlog',
           priority: templateTask.priority,
-          assignees: [], // No assignees yet
+          assignees: [],
           progress: 0,
           estimateHours: templateTask.estimateHours,
+          duration: templateTask.duration || 1, // CRITICAL: Copy duration
+          taskType: templateTask.taskType || 'Task', // CRITICAL: Copy task type
+          dependencies: [], // Will be mapped after all tasks are created
           projectId: projectId,
-          phaseId: projectPhase._id, // Link to the newly created project phase
-          isTemplate: false, // This is a project task, not a template
+          phaseId: projectPhase._id,
+          isTemplate: false,
           order: templateTask.order,
           createdBy: userId,
         });
 
+        templateToProjectTaskMap.set(
+          templateTask._id.toString(),
+          projectTask._id.toString()
+        );
         totalTasksCreated++;
       }
     }
 
+    // Map dependencies from template tasks to project tasks
+    const allTemplateTasks = await Task.find({
+      workflowId: workflow._id,
+      scopeId: scope._id,
+      isTemplate: true,
+    });
+
+    for (const templateTask of allTemplateTasks) {
+      if (templateTask.dependencies && templateTask.dependencies.length > 0) {
+        const projectTaskId = templateToProjectTaskMap.get(templateTask._id.toString());
+        
+        if (projectTaskId) {
+          const mappedDependencies = templateTask.dependencies
+            .map(dep => {
+              const depProjectTaskId = templateToProjectTaskMap.get(dep.taskId);
+              if (depProjectTaskId) {
+                return {
+                  taskId: depProjectTaskId,
+                  type: dep.type,
+                };
+              }
+              return null;
+            })
+            .filter(Boolean);
+
+          if (mappedDependencies.length > 0) {
+            await Task.findByIdAndUpdate(projectTaskId, {
+              $set: { dependencies: mappedDependencies },
+            });
+          }
+        }
+      }
+    }
+
+    // Calculate schedule based on anchor
+    const scheduleResult = await calculateProjectSchedule(
+      projectId,
+      scheduleAnchor.date,
+      scheduleAnchor.from
+    );
+
+    // Update project tasks with calculated dates
+    for (const [taskId, dates] of scheduleResult.taskSchedules.entries()) {
+      await Task.findByIdAndUpdate(taskId, {
+        $set: {
+          startDate: dates.startDate,
+          dueDate: dates.endDate,
+        },
+      });
+    }
+
+    // Update project with calculated dates and risk status
+    await Project.findByIdAndUpdate(projectId, {
+      $set: {
+        calculatedStartDate: scheduleResult.projectStart,
+        calculatedEndDate: scheduleResult.projectEnd,
+        isAtRisk: scheduleResult.isAtRisk,
+        riskReason: scheduleResult.riskReason,
+      },
+    });
+
     console.log(
       `✅ Copied ${templatePhases.length} phases and ${totalTasksCreated} tasks to project ${projectId}`
     );
+    console.log(
+      `📅 Calculated schedule: ${scheduleResult.projectStart.toISOString()} to ${scheduleResult.projectEnd.toISOString()}`
+    );
+    if (scheduleResult.isAtRisk) {
+      console.log(`⚠️ Project at risk: ${scheduleResult.riskReason}`);
+    }
 
     return {
       phasesCreated: templatePhases.length,
@@ -141,12 +212,8 @@ export const getProjectPhasesAndTasks = async (projectId: string) => {
  */
 export const deleteProjectPhasesAndTasks = async (projectId: string) => {
   try {
-    // Delete all project tasks
     await Task.deleteMany({ projectId, isTemplate: false });
-
-    // Delete all project phases
     await Phase.deleteMany({ projectId, isTemplate: false });
-
     console.log(`✅ Deleted all phases and tasks for project ${projectId}`);
   } catch (error) {
     console.error('Error deleting project phases and tasks:', error);

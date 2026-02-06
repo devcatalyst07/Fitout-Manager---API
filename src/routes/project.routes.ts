@@ -3,6 +3,7 @@ import { authMiddleware, AuthRequest } from "../middleware/auth";
 import Project from "../models/Projects";
 import TeamMember from "../models/TeamMember";
 import Brand from "../models/Brand";
+import { copyWorkflowTemplatesToProject } from '../services/workflowTemplateService';
 
 const router = Router();
 
@@ -163,7 +164,6 @@ router.post("/", authMiddleware, async (req: AuthRequest, res) => {
   try {
     console.log("📋 POST /api/projects - User role:", req.user.role);
 
-    // Only admins can create projects
     if (req.user.role !== "admin") {
       return res
         .status(403)
@@ -174,6 +174,8 @@ router.post("/", authMiddleware, async (req: AuthRequest, res) => {
       projectName,
       projectCode,
       brand,
+      scope,
+      workflow,
       region,
       description,
       status,
@@ -181,16 +183,37 @@ router.post("/", authMiddleware, async (req: AuthRequest, res) => {
       spent,
       startDate,
       endDate,
+      scheduleFrom, // NEW
     } = req.body;
 
     // Validation
-    if (!projectName || !brand) {
+    if (!projectName || !brand || !scope || !workflow) {
       return res
         .status(400)
-        .json({ message: "Project name and brand are required" });
+        .json({ message: "Project name, brand, scope, and workflow are required" });
     }
 
-    // Check if brand exists
+    // Validate schedule anchor
+    const scheduleAnchor = scheduleFrom || 'start';
+    if (scheduleAnchor !== 'start' && scheduleAnchor !== 'end') {
+      return res.status(400).json({ message: "scheduleFrom must be 'start' or 'end'" });
+    }
+
+    // Validate anchor date
+    let anchorDate: Date;
+    if (scheduleAnchor === 'start') {
+      if (!startDate) {
+        return res.status(400).json({ message: "Start date is required when scheduling from start" });
+      }
+      anchorDate = new Date(startDate);
+    } else {
+      if (!endDate) {
+        return res.status(400).json({ message: "End date is required when scheduling from end" });
+      }
+      anchorDate = new Date(endDate);
+    }
+
+    const Brand = require('../models/Brand').default;
     const brandExists = await Brand.findOne({ name: brand, isActive: true });
     if (!brandExists) {
       return res.status(400).json({ message: "Invalid brand selected" });
@@ -200,15 +223,32 @@ router.post("/", authMiddleware, async (req: AuthRequest, res) => {
       projectName,
       projectCode,
       brand,
+      scope,
+      workflow,
       region,
       description,
       status: status || "Planning",
       budget: budget || 0,
       spent: spent || 0,
-      startDate,
-      endDate,
+      startDate: scheduleAnchor === 'start' ? startDate : undefined,
+      endDate: scheduleAnchor === 'end' ? endDate : undefined,
+      scheduleFrom: scheduleAnchor,
       userId: req.user.id,
     });
+
+    // Copy workflow templates with scheduling
+    try {
+      await copyWorkflowTemplatesToProject(
+        newProject._id,
+        scope,
+        workflow,
+        req.user.id,
+        { date: anchorDate, from: scheduleAnchor }
+      );
+    } catch (error) {
+      console.error('Error copying workflow templates:', error);
+      // Don't fail project creation, but log the error
+    }
 
     const populatedProject = await Project.findById(newProject._id).populate(
       "userId",

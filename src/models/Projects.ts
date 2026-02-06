@@ -8,17 +8,22 @@ export interface IProject extends Document {
   projectCode?: string;
   description?: string;
   location?: string;
-  region?: string; // ← ADDED
+  region?: string;
   startDate?: Date;
   endDate?: Date;
+  calculatedStartDate?: Date; // NEW - Calculated from tasks
+  calculatedEndDate?: Date; // NEW - Calculated from tasks
+  scheduleFrom: 'start' | 'end'; // NEW - Scheduling anchor
+  isAtRisk: boolean; // NEW - Risk flag
+  riskReason?: string; // NEW - Risk reason
   budget: number;
   spent: number;
   status: 'Planning' | 'In Progress' | 'Completed' | 'On Hold';
   userId: mongoose.Types.ObjectId;
   createdBy: 'user' | 'admin';
-  eacPolicyType?: 'factor' | 'manual'; // ← ADDED
-  eacFactor?: number; // ← ADDED
-  manualForecast?: number; // ← ADDED
+  eacPolicyType?: 'factor' | 'manual';
+  eacFactor?: number;
+  manualForecast?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -50,7 +55,7 @@ const ProjectSchema: Schema = new Schema(
     location: {
       type: String,
     },
-    region: { // ← ADDED
+    region: {
       type: String,
       default: 'Unassigned Region',
     },
@@ -59,6 +64,24 @@ const ProjectSchema: Schema = new Schema(
     },
     endDate: {
       type: Date,
+    },
+    calculatedStartDate: { // NEW
+      type: Date,
+    },
+    calculatedEndDate: { // NEW
+      type: Date,
+    },
+    scheduleFrom: { // NEW
+      type: String,
+      enum: ['start', 'end'],
+      default: 'start',
+    },
+    isAtRisk: { // NEW
+      type: Boolean,
+      default: false,
+    },
+    riskReason: { // NEW
+      type: String,
     },
     budget: {
       type: Number,
@@ -83,16 +106,16 @@ const ProjectSchema: Schema = new Schema(
       enum: ['user', 'admin'],
       default: 'user',
     },
-    eacPolicyType: { // ← ADDED
+    eacPolicyType: {
       type: String,
       enum: ['factor', 'manual'],
       default: 'factor',
     },
-    eacFactor: { // ← ADDED
+    eacFactor: {
       type: Number,
-      default: 0.85, // 85% default forecast factor
+      default: 0.85,
     },
-    manualForecast: { // ← ADDED
+    manualForecast: {
       type: Number,
       default: 0,
     },
