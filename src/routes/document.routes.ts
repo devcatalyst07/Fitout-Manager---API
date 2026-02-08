@@ -1,12 +1,12 @@
-import { Router } from "express";
-import { authMiddleware, AuthRequest } from "../middleware/auth";
+import express from 'express';
+import { authMiddleware } from "../middleware/auth";
 import Document from "../models/Document";
 import Project from "../models/Projects";
 import multer from "multer";
 import { v2 as cloudinary } from "cloudinary";
 import { Readable } from "stream";
 
-const router = Router();
+const router = express.Router();
 
 // Configure Cloudinary
 cloudinary.config({
@@ -62,18 +62,18 @@ const uploadToCloudinary = (buffer: Buffer, options: any) => {
 // GET /api/documents/projects - Get all projects for dropdown
 // ✅ UPDATED: Filter based on user role
 // ============================================
-router.get("/projects", authMiddleware, async (req: AuthRequest, res) => {
+router.get("/projects", authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     let projectFilter: any = {};
 
-    if (req.user.role === "admin") {
+    if (req.user!.role === "admin") {
       // Admin sees all projects
       projectFilter = {};
     } else {
       // User sees only assigned projects
       const TeamMember = require("../models/TeamMember").default;
       const teamMembers = await TeamMember.find({
-        userId: req.user.id,
+        userId: req.user!.id,
         status: "active",
       });
 
@@ -102,18 +102,18 @@ router.get("/projects", authMiddleware, async (req: AuthRequest, res) => {
 // GET /api/documents/folders - Get all document folders
 // ✅ UPDATED: Filter based on user role
 // ============================================
-router.get("/folders", authMiddleware, async (req: AuthRequest, res) => {
+router.get("/folders", authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     let projectFilter: any = {};
 
-    if (req.user.role === "admin") {
+    if (req.user!.role === "admin") {
       // Admin sees all projects
       projectFilter = {};
     } else {
       // User sees only assigned projects
       const TeamMember = require("../models/TeamMember").default;
       const teamMembers = await TeamMember.find({
-        userId: req.user.id,
+        userId: req.user!.id,
         status: "active",
       });
 
@@ -161,15 +161,15 @@ router.get("/folders", authMiddleware, async (req: AuthRequest, res) => {
 router.get(
   "/project/:projectId",
   authMiddleware,
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;
 
       // Check project access for users
-      if (req.user.role !== "admin") {
+      if (req.user!.role !== "admin") {
         const TeamMember = require("../models/TeamMember").default;
         const teamMember = await TeamMember.findOne({
-          userId: req.user.id,
+          userId: req.user!.id,
           projectId: projectId,
           status: "active",
         });
@@ -203,7 +203,7 @@ router.post(
   "/upload",
   authMiddleware,
   upload.single("file"),
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       if (!req.file) {
         return res.status(400).json({ message: "No file uploaded" });
@@ -218,10 +218,10 @@ router.post(
         return res.status(404).json({ message: "Project not found" });
 
       // Check project access for users
-      if (req.user.role !== "admin") {
+      if (req.user!.role !== "admin") {
         const TeamMember = require("../models/TeamMember").default;
         const teamMember = await TeamMember.findOne({
-          userId: req.user.id,
+          userId: req.user!.id,
           projectId: projectId,
           status: "active",
         });
@@ -233,7 +233,7 @@ router.post(
         }
       }
 
-      const userId = req.user?.id || req.user?.userId || req.user?._id;
+      const userId = req.user?.id;
       if (!userId)
         return res.status(401).json({ message: "User authentication error" });
 
@@ -279,7 +279,7 @@ router.post(
 // DELETE /api/documents/:id - Delete document
 // ✅ UPDATED: Check project access for users
 // ============================================
-router.delete("/:id", authMiddleware, async (req: AuthRequest, res) => {
+router.delete("/:id", authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { id } = req.params;
 
@@ -288,10 +288,10 @@ router.delete("/:id", authMiddleware, async (req: AuthRequest, res) => {
       return res.status(404).json({ message: "Document not found" });
 
     // Check project access for users
-    if (req.user.role !== "admin") {
+    if (req.user!.role !== "admin") {
       const TeamMember = require("../models/TeamMember").default;
       const teamMember = await TeamMember.findOne({
-        userId: req.user.id,
+        userId: req.user!.id,
         projectId: document.projectId,
         status: "active",
       });
@@ -323,18 +323,18 @@ router.delete("/:id", authMiddleware, async (req: AuthRequest, res) => {
 // GET /api/documents/stats/overview - Document statistics
 // ✅ UPDATED: Filter based on user role
 // ============================================
-router.get("/stats/overview", authMiddleware, async (req: AuthRequest, res) => {
+router.get("/stats/overview", authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     let projectFilter: any = {};
 
-    if (req.user.role === "admin") {
+    if (req.user!.role === "admin") {
       // Admin sees all
       projectFilter = {};
     } else {
       // User sees only assigned projects
       const TeamMember = require("../models/TeamMember").default;
       const teamMembers = await TeamMember.find({
-        userId: req.user.id,
+        userId: req.user!.id,
         status: "active",
       });
 

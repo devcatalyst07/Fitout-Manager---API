@@ -1,11 +1,11 @@
-import { Router } from "express";
-import { authMiddleware, AuthRequest } from "../middleware/auth";
+import express from 'express';
+import { authMiddleware } from "../middleware/auth";
 import Project from "../models/Projects";
 import Task from "../models/Task";
 import BudgetItem from "../models/BudgetItem";
 import Brand from "../models/Brand";
 
-const router = Router();
+const router = express.Router();
 
 // ============================================
 // GET /api/dashboard/stats - Dashboard Statistics
@@ -16,22 +16,22 @@ const router = Router();
 router.get(
   "/dashboard/stats",
   authMiddleware,
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       console.log("=== Dashboard Stats Request Started ===");
-      console.log("User role:", req.user.role);
+      console.log("User role:", req.user!.role);
 
       // Build project filter based on user role
       let projectFilter: any = {};
 
-      if (req.user.role === "admin") {
+      if (req.user!.role === "admin") {
         // Admin sees all projects
         projectFilter = {};
       } else {
         // User sees only their assigned projects
         const TeamMember = require("../models/TeamMember").default;
         const teamMembers = await TeamMember.find({
-          userId: req.user.id,
+          userId: req.user!.id,
           status: "active",
         });
 
@@ -175,7 +175,7 @@ router.get(
       // =====================================
       let brandFilter: any = { isActive: true };
 
-      if (req.user.role !== "admin") {
+      if (req.user!.role !== "admin") {
         // Get unique brands from user's projects
         const userBrands = [...new Set(projects.map((p) => p.brand))];
         brandFilter.name = { $in: userBrands };

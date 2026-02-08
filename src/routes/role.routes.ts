@@ -1,13 +1,13 @@
-import { Router } from "express";
-import { authMiddleware, AuthRequest } from "../middleware/auth";
-import { adminOnly } from "../middleware/role";
+import express from 'express';
+import { authMiddleware } from "../middleware/auth";
+import { requireAdmin as adminOnly } from '../middleware/permissions';
 import Role from "../models/Role";
 import Brand from "../models/Brand";
 
-const router = Router();
+const router = express.Router();
 
 // GET all roles for a brand
-router.get("/brand/:brandId", authMiddleware, adminOnly, async (req, res) => {
+router.get("/brand/:brandId", authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { brandId } = req.params;
 
@@ -31,7 +31,7 @@ router.get("/brand/:brandId", authMiddleware, adminOnly, async (req, res) => {
 });
 
 // GET single role by ID
-router.get("/:roleId", authMiddleware, async (req, res) => {
+router.get("/:roleId", authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { roleId } = req.params;
 
@@ -53,7 +53,7 @@ router.get("/:roleId", authMiddleware, async (req, res) => {
 });
 
 // CREATE new role
-router.post("/", authMiddleware, adminOnly, async (req: AuthRequest, res) => {
+router.post("/", authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { name, brandId, permissions, isDefault } = req.body;
 
@@ -133,7 +133,7 @@ router.post("/", authMiddleware, adminOnly, async (req: AuthRequest, res) => {
       brandId,
       permissions: defaultPermissions,
       isDefault: isDefault || false,
-      createdBy: req.user.id,
+      createdBy: req.user!.id,
     });
 
     const populatedRole = await Role.findById(newRole._id)
@@ -161,7 +161,7 @@ router.post("/", authMiddleware, adminOnly, async (req: AuthRequest, res) => {
 });
 
 // UPDATE role permissions
-router.put("/:roleId", authMiddleware, adminOnly, async (req, res) => {
+router.put("/:roleId", authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { roleId } = req.params;
     const { name, permissions } = req.body;
@@ -194,7 +194,7 @@ router.put("/:roleId", authMiddleware, adminOnly, async (req, res) => {
 });
 
 // DELETE role
-router.delete("/:roleId", authMiddleware, adminOnly, async (req, res) => {
+router.delete("/:roleId", authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { roleId } = req.params;
 

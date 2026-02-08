@@ -34,7 +34,7 @@ router.post(
   '/scopes/:scopeId/workflows/:workflowId/tasks/bulk-upload',
   authMiddleware, // Changed from 'authenticate'
   upload.single('file'),
-  async (req: Request, res: Response): Promise<any> => {
+  async (req: express.Request, res: express.Response): Promise<any> => {
     try {
       const { scopeId, workflowId } = req.params;
 
@@ -233,7 +233,7 @@ router.post(
 router.get(
   '/scopes/:scopeId/workflows/:workflowId/templates/task-upload-template.xlsx',
   authMiddleware, // Changed from 'authenticate'
-  async (req: Request, res: Response): Promise<any> => {
+  async (req: express.Request, res: express.Response): Promise<any> => {
     try {
       const workbook = new ExcelJS.Workbook();
       const worksheet = workbook.addWorksheet('Tasks');

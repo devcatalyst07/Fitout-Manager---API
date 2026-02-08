@@ -1,13 +1,13 @@
-import { Router } from "express";
-import { authMiddleware, AuthRequest } from "../middleware/auth";
+import express from 'express';
+import { authMiddleware } from "../middleware/auth";
 import Comment from "../models/Comment";
 import Task from "../models/Task";
 import ActivityLog from "../models/ActivityLog";
 
-const router = Router();
+const router = express.Router();
 
 // GET all comments for a task
-router.get("/:taskId/comments", authMiddleware, async (req, res) => {
+router.get("/:taskId/comments", authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { taskId } = req.params;
 
@@ -28,7 +28,7 @@ router.get("/:taskId/comments", authMiddleware, async (req, res) => {
 router.post(
   "/:taskId/comments",
   authMiddleware,
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { taskId } = req.params;
       const { comment, attachments } = req.body;
@@ -44,8 +44,8 @@ router.post(
       }
 
       // Check if user is assigned to the task or is admin
-      const userEmail = req.user.email;
-      const userRole = req.user.role;
+      const userEmail = req.user!.email;
+      const userRole = req.user!.role;
 
       const isAssigned = task.assignees.some(
         (assignee) => assignee.email === userEmail
@@ -63,9 +63,9 @@ router.post(
       // Create comment
       const newComment = await Comment.create({
         taskId,
-        userId: req.user.id,
-        userName: req.user.name,
-        userEmail: req.user.email,
+        userId: req.user!.id,
+        userName: req.user!.name,
+        userEmail: req.user!.email,
         comment,
         attachments: attachments || [],
       });
@@ -73,11 +73,11 @@ router.post(
       // Log activity
       await ActivityLog.create({
         taskId,
-        userId: req.user.id,
-        userName: req.user.name,
-        userEmail: req.user.email,
+        userId: req.user!.id,
+        userName: req.user!.name,
+        userEmail: req.user!.email,
         action: "commented",
-        description: `${req.user.name} added a comment`,
+        description: `${req.user!.name} added a comment`,
       });
 
       const populatedComment = await Comment.findById(newComment._id).populate(
@@ -102,7 +102,7 @@ router.post(
 router.delete(
   "/:taskId/comments/:commentId",
   authMiddleware,
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { commentId, taskId } = req.params;
 
@@ -113,8 +113,8 @@ router.delete(
 
       // Only comment owner or admin can delete
       if (
-        comment.userId.toString() !== req.user.id &&
-        req.user.role !== "admin"
+        comment.userId.toString() !== req.user!.id &&
+        req.user!.role !== "admin"
       ) {
         return res
           .status(403)
@@ -126,11 +126,11 @@ router.delete(
       // Log activity
       await ActivityLog.create({
         taskId,
-        userId: req.user.id,
-        userName: req.user.name,
-        userEmail: req.user.email,
+        userId: req.user!.id,
+        userName: req.user!.name,
+        userEmail: req.user!.email,
         action: "updated",
-        description: `${req.user.name} deleted a comment`,
+        description: `${req.user!.name} deleted a comment`,
       });
 
       res.json({ message: "Comment deleted successfully" });

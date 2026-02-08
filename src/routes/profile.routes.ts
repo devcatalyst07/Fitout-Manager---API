@@ -1,11 +1,11 @@
-import { Router } from "express";
+import express from 'express';
 import bcrypt from "bcryptjs";
 import multer from "multer";
 import { v2 as cloudinary } from "cloudinary";
-import { authMiddleware, AuthRequest } from "../middleware/auth";
+import { authMiddleware } from "../middleware/auth";
 import User from "../models/User";
 
-const router = Router();
+const router = express.Router();
 
 // ─── Cloudinary config (same pattern as upload.routes.ts) ─────────────────────
 cloudinary.config({
@@ -30,9 +30,9 @@ const upload = multer({
 
 // ─── GET /api/profile ─────────────────────────────────────────────────────────
 // Returns current logged-in user's profile (works for both admin & user)
-router.get("/", authMiddleware, async (req: AuthRequest, res) => {
+router.get("/", authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
-    const user = await User.findById(req.user.id).select("-password");
+    const user = await User.findById(req.user!.id).select("-password");
 
     if (!user) {
       return res.status(404).json({ message: "User not found" });
@@ -71,10 +71,10 @@ router.put(
   "/",
   authMiddleware,
   upload.single("profilePhoto"),
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { firstName, lastName, username, email } = req.body;
-      const user = await User.findById(req.user.id);
+      const user = await User.findById(req.user!.id);
 
       if (!user) {
         return res.status(404).json({ message: "User not found" });
@@ -185,7 +185,7 @@ router.put(
 router.post(
   "/change-password",
   authMiddleware,
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { currentPassword, newPassword } = req.body;
 
@@ -201,7 +201,7 @@ router.post(
           .json({ message: "New password must be at least 8 characters." });
       }
 
-      const user = await User.findById(req.user.id);
+      const user = await User.findById(req.user!.id);
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }

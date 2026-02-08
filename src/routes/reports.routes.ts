@@ -1,11 +1,11 @@
-import { Router } from "express";
-import { authMiddleware, AuthRequest } from "../middleware/auth";
+import express from 'express';
+import { authMiddleware } from "../middleware/auth";
 import Project from "../models/Projects";
 import Task from "../models/Task";
 import BudgetItem from "../models/BudgetItem";
 import Brand from "../models/Brand";
 
-const router = Router();
+const router = express.Router();
 
 // ============================================
 // GET /api/reports/projects - Get all projects for reports listing
@@ -14,18 +14,18 @@ const router = Router();
 router.get(
   "/reports/projects",
   authMiddleware,
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       let projectFilter: any = {};
 
-      if (req.user.role === "admin") {
+      if (req.user!.role === "admin") {
         // Admin sees all projects
         projectFilter = {};
       } else {
         // User sees only assigned projects
         const TeamMember = require("../models/TeamMember").default;
         const teamMembers = await TeamMember.find({
-          userId: req.user.id,
+          userId: req.user!.id,
           status: "active",
         });
 
@@ -54,15 +54,15 @@ router.get(
 // GET /api/reports/brands - Get all brands for reports
 // ✅ UPDATED: Filter based on user role
 // ============================================
-router.get("/reports/brands", authMiddleware, async (req: AuthRequest, res) => {
+router.get("/reports/brands", authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     let brandFilter: any = { isActive: true };
 
-    if (req.user.role !== "admin") {
+    if (req.user!.role !== "admin") {
       // User sees only brands from their assigned projects
       const TeamMember = require("../models/TeamMember").default;
       const teamMembers = await TeamMember.find({
-        userId: req.user.id,
+        userId: req.user!.id,
         status: "active",
       });
 
@@ -93,16 +93,16 @@ router.get("/reports/brands", authMiddleware, async (req: AuthRequest, res) => {
 router.get(
   "/reports/portfolio/csv",
   authMiddleware,
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       let projectFilter: any = {};
 
-      if (req.user.role === "admin") {
+      if (req.user!.role === "admin") {
         projectFilter = {};
       } else {
         const TeamMember = require("../models/TeamMember").default;
         const teamMembers = await TeamMember.find({
-          userId: req.user.id,
+          userId: req.user!.id,
           status: "active",
         });
 
@@ -259,16 +259,16 @@ router.get(
 router.get(
   "/reports/portfolio/pdf-data",
   authMiddleware,
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       let projectFilter: any = {};
 
-      if (req.user.role === "admin") {
+      if (req.user!.role === "admin") {
         projectFilter = {};
       } else {
         const TeamMember = require("../models/TeamMember").default;
         const teamMembers = await TeamMember.find({
-          userId: req.user.id,
+          userId: req.user!.id,
           status: "active",
         });
 
@@ -403,16 +403,16 @@ router.get(
 router.get(
   "/reports/brand/:brandName/csv",
   authMiddleware,
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { brandName } = req.params;
 
       let projectFilter: any = { brand: brandName };
 
-      if (req.user.role !== "admin") {
+      if (req.user!.role !== "admin") {
         const TeamMember = require("../models/TeamMember").default;
         const teamMembers = await TeamMember.find({
-          userId: req.user.id,
+          userId: req.user!.id,
           status: "active",
         });
 
@@ -502,16 +502,16 @@ router.get(
 router.get(
   "/reports/brand/:brandName/pdf-data",
   authMiddleware,
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { brandName } = req.params;
 
       let projectFilter: any = { brand: brandName };
 
-      if (req.user.role !== "admin") {
+      if (req.user!.role !== "admin") {
         const TeamMember = require("../models/TeamMember").default;
         const teamMembers = await TeamMember.find({
-          userId: req.user.id,
+          userId: req.user!.id,
           status: "active",
         });
 
@@ -586,15 +586,15 @@ router.get(
 router.get(
   "/reports/project/:projectId/csv",
   authMiddleware,
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;
 
       // Check project access for users
-      if (req.user.role !== "admin") {
+      if (req.user!.role !== "admin") {
         const TeamMember = require("../models/TeamMember").default;
         const teamMember = await TeamMember.findOne({
-          userId: req.user.id,
+          userId: req.user!.id,
           projectId: projectId,
           status: "active",
         });
@@ -713,15 +713,15 @@ router.get(
 router.get(
   "/reports/project/:projectId/pdf-data",
   authMiddleware,
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;
 
       // Check project access for users
-      if (req.user.role !== "admin") {
+      if (req.user!.role !== "admin") {
         const TeamMember = require("../models/TeamMember").default;
         const teamMember = await TeamMember.findOne({
-          userId: req.user.id,
+          userId: req.user!.id,
           projectId: projectId,
           status: "active",
         });

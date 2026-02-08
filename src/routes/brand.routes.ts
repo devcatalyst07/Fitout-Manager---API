@@ -1,14 +1,14 @@
-import { Router } from "express";
-import { authMiddleware, AuthRequest } from "../middleware/auth";
-import { adminOnly } from "../middleware/role";
+import express from 'express';
+import { authMiddleware } from "../middleware/auth";
+import { requireAdmin as adminOnly } from '../middleware/permissions';
 import Brand from "../models/Brand";
 import Project from "../models/Projects";
 import Task from "../models/Task";
 
-const router = Router();
+const router = express.Router();
 
 // GET all brands
-router.get("/", authMiddleware, async (req, res) => {
+router.get("/", authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const brands = await Brand.find({ isActive: true })
       .populate("createdBy", "name email")
@@ -22,7 +22,7 @@ router.get("/", authMiddleware, async (req, res) => {
 });
 
 // GET all brands (including inactive - admin only)
-router.get("/all", authMiddleware, adminOnly, async (req, res) => {
+router.get("/all", authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const brands = await Brand.find()
       .populate("createdBy", "name email")
@@ -36,7 +36,7 @@ router.get("/all", authMiddleware, adminOnly, async (req, res) => {
 });
 
 // GET brand dashboard data WITH REAL DATA
-router.get("/:id/dashboard", authMiddleware, async (req, res) => {
+router.get("/:id/dashboard", authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { id } = req.params;
 
@@ -112,7 +112,7 @@ router.get("/:id/dashboard", authMiddleware, async (req, res) => {
 });
 
 // GET brand team members
-router.get("/:id/team", authMiddleware, async (req, res) => {
+router.get("/:id/team", authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { id } = req.params;
 
@@ -130,7 +130,7 @@ router.get("/:id/team", authMiddleware, async (req, res) => {
 });
 
 // ADD team member to brand
-router.post("/:id/team", authMiddleware, async (req, res) => {
+router.post("/:id/team", authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { id } = req.params;
     const { name, email } = req.body;
@@ -172,7 +172,7 @@ router.post("/:id/team", authMiddleware, async (req, res) => {
 });
 
 // CREATE new brand (Admin only)
-router.post("/", authMiddleware, adminOnly, async (req: AuthRequest, res) => {
+router.post("/", authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { name, description } = req.body;
 
@@ -188,7 +188,7 @@ router.post("/", authMiddleware, adminOnly, async (req: AuthRequest, res) => {
     const newBrand = await Brand.create({
       name,
       description,
-      createdBy: req.user.id,
+      createdBy: req.user!.id,
       teamMembers: [],
     });
 
@@ -208,7 +208,7 @@ router.post("/", authMiddleware, adminOnly, async (req: AuthRequest, res) => {
 });
 
 // UPDATE brand (Admin only)
-router.put("/:id", authMiddleware, adminOnly, async (req, res) => {
+router.put("/:id", authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { id } = req.params;
     const { name, description, isActive } = req.body;
@@ -243,7 +243,7 @@ router.put("/:id", authMiddleware, adminOnly, async (req, res) => {
 });
 
 // DELETE brand (Admin only)
-router.delete("/:id", authMiddleware, adminOnly, async (req, res) => {
+router.delete("/:id", authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { id } = req.params;
 

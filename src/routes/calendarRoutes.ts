@@ -8,7 +8,7 @@ const router = express.Router();
 router.get(
   "/projects/:projectId/events",
   authMiddleware,
-  async (req: Request, res: Response) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;
       const events = await CalendarEvent.find({ projectId })
@@ -27,7 +27,7 @@ router.get(
 router.get(
   "/events/:eventId",
   authMiddleware,
-  async (req: Request, res: Response) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const event = await CalendarEvent.findById(req.params.eventId).populate(
         "linkedTaskId",
@@ -50,7 +50,7 @@ router.get(
 router.post(
   "/projects/:projectId/events",
   authMiddleware,
-  async (req: Request, res: Response) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;
       const {
@@ -97,7 +97,7 @@ router.post(
 router.put(
   "/events/:eventId",
   authMiddleware,
-  async (req: Request, res: Response) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { eventId } = req.params;
       const updates = req.body;
@@ -124,7 +124,7 @@ router.put(
 router.delete(
   "/events/:eventId",
   authMiddleware,
-  async (req: Request, res: Response) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const event = await CalendarEvent.findByIdAndDelete(req.params.eventId);
 

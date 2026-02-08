@@ -1,11 +1,11 @@
-import { Router } from "express";
+import express from 'express';
 import { authMiddleware } from "../middleware/auth";
 import ActivityLog from "../models/ActivityLog";
 
-const router = Router();
+const router = express.Router();
 
 // GET all activity logs for a task
-router.get("/:taskId/activity-logs", authMiddleware, async (req, res) => {
+router.get("/:taskId/activity-logs", authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { taskId } = req.params;
 

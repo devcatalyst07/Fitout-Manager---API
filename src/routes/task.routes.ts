@@ -1,5 +1,5 @@
-import { Router } from "express";
-import { authMiddleware, AuthRequest } from "../middleware/auth";
+import express from 'express';
+import { authMiddleware } from "../middleware/auth";
 import {
   requirePermission,
   requireProjectAccess,
@@ -11,10 +11,10 @@ import ActivityLog from "../models/ActivityLog";
 import { activityHelpers } from "../utils/activityLogger";
 import mongoose from "mongoose";
 
-const router = Router();
+const router = express.Router();
 
 // GET /api/tasks/dashboard - Get all tasks for dashboard widget
-router.get('/dashboard', authMiddleware, async (req, res) => {
+router.get('/dashboard', authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     console.log('Dashboard Tasks API called');
 
@@ -135,7 +135,7 @@ router.get(
   "/:projectId/tasks",
   authMiddleware,
   requireProjectAccess,
-  async (req, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;
 
@@ -193,7 +193,7 @@ router.get(
   "/:projectId/tasks/:taskId",
   authMiddleware,
   requireProjectAccess,
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { taskId } = req.params;
 
@@ -224,7 +224,7 @@ router.get(
   "/:projectId/tasks/stats/overview",
   authMiddleware,
   requireProjectAccess,
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;
 
@@ -277,7 +277,7 @@ router.post(
   "/:projectId/tasks",
   authMiddleware,
   requirePermission("projects-task-create"),
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;
       const {
@@ -343,7 +343,7 @@ router.post(
         projectId,
         phaseId: phaseId || null,
         isTemplate: false,
-        createdBy: req.user.id,
+        createdBy: req.user!.id,
       });
 
       const populatedTask = await Task.findById(newTask._id)
@@ -353,11 +353,11 @@ router.post(
 
       await ActivityLog.create({
         taskId: newTask._id,
-        userId: req.user.id,
-        userName: req.user.name || "Unknown",
-        userEmail: req.user.email,
+        userId: req.user!.id,
+        userName: req.user!.name || "Unknown",
+        userEmail: req.user!.email,
         action: "created",
-        description: `${req.user.name || "User"} created task "${title}"`,
+        description: `${req.user!.name || "User"} created task "${title}"`,
       });
 
       res.status(201).json({
@@ -378,7 +378,7 @@ router.put(
   "/:projectId/tasks/:taskId",
   authMiddleware,
   requirePermission("projects-task-list-action-edit"),
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { taskId } = req.params;
       const updateData = req.body;
@@ -421,28 +421,28 @@ router.put(
       if (oldTask.title !== updatedTask.title) {
         await ActivityLog.create({
           taskId,
-          userId: req.user.id,
-          userName: req.user.name,
-          userEmail: req.user.email,
+          userId: req.user!.id,
+          userName: req.user!.name,
+          userEmail: req.user!.email,
           action: "updated",
           field: "title",
           oldValue: oldTask.title,
           newValue: updatedTask.title,
-          description: `${req.user.name} changed title from "${oldTask.title}" to "${updatedTask.title}"`,
+          description: `${req.user!.name} changed title from "${oldTask.title}" to "${updatedTask.title}"`,
         });
       }
 
       if (oldTask.status !== updatedTask.status) {
         await ActivityLog.create({
           taskId,
-          userId: req.user.id,
-          userName: req.user.name,
-          userEmail: req.user.email,
+          userId: req.user!.id,
+          userName: req.user!.name,
+          userEmail: req.user!.email,
           action: "status_changed",
           field: "status",
           oldValue: oldTask.status,
           newValue: updatedTask.status,
-          description: `${req.user.name} changed status from "${oldTask.status}" to "${updatedTask.status}"`,
+          description: `${req.user!.name} changed status from "${oldTask.status}" to "${updatedTask.status}"`,
         });
       }
 
@@ -457,22 +457,22 @@ router.put(
 
         await ActivityLog.create({
           taskId,
-          userId: req.user.id,
-          userName: req.user.name,
-          userEmail: req.user.email,
+          userId: req.user!.id,
+          userName: req.user!.name,
+          userEmail: req.user!.email,
           action: "updated",
           field: "phase",
           oldValue: oldPhase?.name || "Unassigned",
           newValue: newPhase?.name || "Unassigned",
-          description: `${req.user.name} moved task from "${oldPhase?.name || "Unassigned"}" to "${newPhase?.name || "Unassigned"}"`,
+          description: `${req.user!.name} moved task from "${oldPhase?.name || "Unassigned"}" to "${newPhase?.name || "Unassigned"}"`,
         });
       }
 
       if (oldTask?.status !== "Done" && updatedTask.status === "Done") {
         await activityHelpers.taskCompleted(
           req.params.projectId,
-          req.user.id,
-          req.user.name || "User",
+          req.user!.id,
+          req.user!.name || "User",
           updatedTask.title,
           taskId
         );
@@ -496,7 +496,7 @@ router.delete(
   "/:projectId/tasks/:taskId",
   authMiddleware,
   requirePermission("projects-task-list-action-delete"),
-  async (req, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { taskId } = req.params;
 
@@ -522,7 +522,7 @@ router.delete(
 // ==================== PROJECT PHASE ROUTES ====================
 
 // GET all phases for a project
-router.get("/:projectId/phases", authMiddleware, requireProjectAccess, async (req, res) => {
+router.get("/:projectId/phases", authMiddleware, requireProjectAccess, async (req: express.Request, res: express.Response) => {
   try {
     const { projectId } = req.params;
 
@@ -543,7 +543,7 @@ router.post(
   "/:projectId/phases",
   authMiddleware,
   requirePermission("projects-task-create"),
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;
       const { name, description, order, color } = req.body;
@@ -579,7 +579,7 @@ router.post(
         order: phaseOrder,
         color,
         isTemplate: false,
-        createdBy: req.user.id,
+        createdBy: req.user!.id,
       });
 
       res.status(201).json({
@@ -598,7 +598,7 @@ router.put(
   "/:projectId/phases/:phaseId",
   authMiddleware,
   requirePermission("projects-task-list-action-edit"),
-  async (req, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { projectId, phaseId } = req.params;
       const { name, description, order, color } = req.body;
@@ -635,7 +635,7 @@ router.delete(
   "/:projectId/phases/:phaseId",
   authMiddleware,
   requirePermission("projects-task-list-action-delete"),
-  async (req, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { projectId, phaseId } = req.params;
 

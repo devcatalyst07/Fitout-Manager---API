@@ -1,30 +1,30 @@
-import { Router } from "express";
-import { authMiddleware, AuthRequest } from "../middleware/auth";
+import express from 'express';
+import { authMiddleware } from "../middleware/auth";
 import Project from "../models/Projects";
 import TeamMember from "../models/TeamMember";
 import Brand from "../models/Brand";
 import { copyWorkflowTemplatesToProject } from '../services/workflowTemplateService';
 
-const router = Router();
+const router = express.Router();
 
 // ============================================
 // GET /api/projects/stats - Get overall project statistics
 // ✅ Returns stats for all projects (admin) or assigned projects (users)
 // ⚠️ MUST BE BEFORE /:id ROUTE
 // ============================================
-router.get("/stats", authMiddleware, async (req: AuthRequest, res) => {
+router.get("/stats", authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
-    console.log("📊 GET /api/projects/stats - User role:", req.user.role);
+    console.log("📊 GET /api/projects/stats - User role:", req.user!.role);
 
     let projectFilter: any = {};
 
-    if (req.user.role === "admin") {
+    if (req.user!.role === "admin") {
       // Admin sees all projects
       projectFilter = {};
     } else {
       // User sees only assigned projects
       const teamMembers = await TeamMember.find({
-        userId: req.user.id,
+        userId: req.user!.id,
         status: "active",
       });
 
@@ -68,19 +68,19 @@ router.get("/stats", authMiddleware, async (req: AuthRequest, res) => {
 // ✅ UPDATED: Filter based on user role
 // Admin sees all, users see only assigned projects
 // ============================================
-router.get("/", authMiddleware, async (req: AuthRequest, res) => {
+router.get("/", authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
-    console.log("📋 GET /api/projects - User role:", req.user.role);
+    console.log("📋 GET /api/projects - User role:", req.user!.role);
 
     let projectFilter: any = {};
 
-    if (req.user.role === "admin") {
+    if (req.user!.role === "admin") {
       // Admin sees all projects
       projectFilter = {};
     } else {
       // User sees only assigned projects
       const teamMembers = await TeamMember.find({
-        userId: req.user.id,
+        userId: req.user!.id,
         status: "active",
       });
 
@@ -113,20 +113,20 @@ router.get("/", authMiddleware, async (req: AuthRequest, res) => {
 // GET /api/projects/:id - Get single project
 // ✅ UPDATED: Check project access for users
 // ============================================
-router.get("/:id", authMiddleware, async (req: AuthRequest, res) => {
+router.get("/:id", authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { id } = req.params;
     console.log(
       "📋 GET /api/projects/:id - Project:",
       id,
       "User role:",
-      req.user.role,
+      req.user!.role,
     );
 
     // Check project access for users
-    if (req.user.role !== "admin") {
+    if (req.user!.role !== "admin") {
       const teamMember = await TeamMember.findOne({
-        userId: req.user.id,
+        userId: req.user!.id,
         projectId: id,
         status: "active",
       });
@@ -160,11 +160,11 @@ router.get("/:id", authMiddleware, async (req: AuthRequest, res) => {
 // POST /api/projects - Create new project
 // ✅ Admin only (users shouldn't create projects)
 // ============================================
-router.post("/", authMiddleware, async (req: AuthRequest, res) => {
+router.post("/", authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
-    console.log("📋 POST /api/projects - User role:", req.user.role);
+    console.log("📋 POST /api/projects - User role:", req.user!.role);
 
-    if (req.user.role !== "admin") {
+    if (req.user!.role !== "admin") {
       return res
         .status(403)
         .json({ message: "Only admins can create projects" });
@@ -233,7 +233,7 @@ router.post("/", authMiddleware, async (req: AuthRequest, res) => {
       startDate: scheduleAnchor === 'start' ? startDate : undefined,
       endDate: scheduleAnchor === 'end' ? endDate : undefined,
       scheduleFrom: scheduleAnchor,
-      userId: req.user.id,
+      userId: req.user!.id,
     });
 
     // Copy workflow templates with scheduling
@@ -242,7 +242,7 @@ router.post("/", authMiddleware, async (req: AuthRequest, res) => {
         newProject._id,
         scope,
         workflow,
-        req.user.id,
+        req.user!.id,
         { date: anchorDate, from: scheduleAnchor }
       );
     } catch (error) {
@@ -273,20 +273,20 @@ router.post("/", authMiddleware, async (req: AuthRequest, res) => {
 // PUT /api/projects/:id - Update project
 // ✅ UPDATED: Check project access for users
 // ============================================
-router.put("/:id", authMiddleware, async (req: AuthRequest, res) => {
+router.put("/:id", authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { id } = req.params;
     console.log(
       "📋 PUT /api/projects/:id - Project:",
       id,
       "User role:",
-      req.user.role,
+      req.user!.role,
     );
 
     // Check project access for users
-    if (req.user.role !== "admin") {
+    if (req.user!.role !== "admin") {
       const teamMember = await TeamMember.findOne({
-        userId: req.user.id,
+        userId: req.user!.id,
         projectId: id,
         status: "active",
       });
@@ -379,18 +379,18 @@ router.put("/:id", authMiddleware, async (req: AuthRequest, res) => {
 // DELETE /api/projects/:id - Delete project
 // ✅ Admin only (users shouldn't delete projects)
 // ============================================
-router.delete("/:id", authMiddleware, async (req: AuthRequest, res) => {
+router.delete("/:id", authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { id } = req.params;
     console.log(
       "📋 DELETE /api/projects/:id - Project:",
       id,
       "User role:",
-      req.user.role,
+      req.user!.role,
     );
 
     // Only admins can delete projects
-    if (req.user.role !== "admin") {
+    if (req.user!.role !== "admin") {
       return res
         .status(403)
         .json({ message: "Only admins can delete projects" });
@@ -421,15 +421,15 @@ router.delete("/:id", authMiddleware, async (req: AuthRequest, res) => {
 // GET /api/projects/:id/stats - Get project statistics
 // ✅ UPDATED: Check project access for users
 // ============================================
-router.get("/:id/stats", authMiddleware, async (req: AuthRequest, res) => {
+router.get("/:id/stats", authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { id } = req.params;
     console.log("📊 GET /api/projects/:id/stats - Project:", id);
 
     // Check project access for users
-    if (req.user.role !== "admin") {
+    if (req.user!.role !== "admin") {
       const teamMember = await TeamMember.findOne({
-        userId: req.user.id,
+        userId: req.user!.id,
         projectId: id,
         status: "active",
       });

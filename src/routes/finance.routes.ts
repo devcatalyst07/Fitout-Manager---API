@@ -1,11 +1,11 @@
-import { Router } from "express";
-import { authMiddleware, AuthRequest } from "../middleware/auth";
+import express from 'express';
+import { authMiddleware } from "../middleware/auth";
 import Project from "../models/Projects";
 import BudgetItem from "../models/BudgetItem";
 import Brand from "../models/Brand";
 import Approval from "../models/Approval";
 
-const router = Router();
+const router = express.Router();
 
 // ============================================
 // GET /api/finance - Finance Overview
@@ -13,18 +13,18 @@ const router = Router();
 // Admin sees all projects
 // User sees only projects they're assigned to
 // ============================================
-router.get("/", authMiddleware, async (req: AuthRequest, res) => {
+router.get("/", authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     console.log("📊 Finance API called");
     console.log("Query params:", req.query);
-    console.log("User role:", req.user.role);
+    console.log("User role:", req.user!.role);
 
     const { brand, region } = req.query;
 
     // Build filter based on user role
     let projectFilter: any = {};
 
-    if (req.user.role === "admin") {
+    if (req.user!.role === "admin") {
       // Admin sees all projects
       if (brand && brand !== "All") {
         projectFilter.brand = brand;
@@ -36,7 +36,7 @@ router.get("/", authMiddleware, async (req: AuthRequest, res) => {
       // User sees only their assigned projects
       const TeamMember = require("../models/TeamMember").default;
       const teamMembers = await TeamMember.find({
-        userId: req.user.id,
+        userId: req.user!.id,
         status: "active",
       });
 
@@ -283,7 +283,7 @@ router.get("/", authMiddleware, async (req: AuthRequest, res) => {
     // Get filters
     const brands = await Brand.find({ isActive: true }).select("name");
     const allProjects =
-      req.user.role === "admin" ? await Project.find() : projects; // Users only see regions from their projects
+      req.user!.role === "admin" ? await Project.find() : projects; // Users only see regions from their projects
     const regions = [
       ...new Set(allProjects.map((p) => p.region || "Unassigned Region")),
     ];
@@ -332,7 +332,7 @@ router.get("/", authMiddleware, async (req: AuthRequest, res) => {
 router.put(
   "/projects/:projectId/eac-settings",
   authMiddleware,
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;
       const { eacPolicyType, eacFactor, manualForecast } = req.body;
@@ -340,10 +340,10 @@ router.put(
       console.log("🔧 Updating EAC:", { projectId, eacPolicyType, eacFactor });
 
       // Check project access
-      if (req.user.role !== "admin") {
+      if (req.user!.role !== "admin") {
         const TeamMember = require("../models/TeamMember").default;
         const teamMember = await TeamMember.findOne({
-          userId: req.user.id,
+          userId: req.user!.id,
           projectId: projectId,
           status: "active",
         });

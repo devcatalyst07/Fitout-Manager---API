@@ -1,14 +1,14 @@
-import { Router } from "express";
-import { authMiddleware, AuthRequest } from "../middleware/auth";
+import express from 'express';
+import { authMiddleware } from "../middleware/auth";
 import ProjectActivity from "../models/ProjectActivity";
 
-const router = Router();
+const router = express.Router();
 
 // GET recent project activities
 router.get(
   "/:projectId/activity",
   authMiddleware,
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;
       const limit = parseInt(req.query.limit as string) || 10;

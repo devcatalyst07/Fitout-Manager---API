@@ -1,12 +1,12 @@
-import { Router } from 'express';
-import { authMiddleware, AuthRequest } from '../middleware/auth';
+import express from 'express';
+import { authMiddleware } from '../middleware/auth';
 import Thread from '../models/Thread';
 import ThreadComment from '../models/ThreadComment';
 import Brand from '../models/Brand';
 import TeamMember from '../models/TeamMember';
 import Project from '../models/Projects';
 
-const router = Router();
+const router = express.Router();
 
 // Helper: Check if user can access thread
 const canAccessThread = async (userId: string, thread: any) => {
@@ -33,14 +33,14 @@ const canAccessThread = async (userId: string, thread: any) => {
 };
 
 // CREATE thread
-router.post('/brands/:brandId/threads', authMiddleware, async (req: AuthRequest, res) => {
+router.post('/brands/:brandId/threads', authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { brandId } = req.params;
     const { title, content, projectId, attachments } = req.body;
 
     console.log('CREATE THREAD REQUEST:', {
       brandId,
-      userId: req.user.id,
+      userId: req.user!.id,
       hasTitle: !!title,
       hasContent: !!content,
       projectId,
@@ -64,7 +64,7 @@ router.post('/brands/:brandId/threads', authMiddleware, async (req: AuthRequest,
     if (projectId) {
       const isTeamMember = await TeamMember.findOne({
         projectId,
-        userId: req.user.id,
+        userId: req.user!.id,
         status: 'active',
       });
 
@@ -80,9 +80,9 @@ router.post('/brands/:brandId/threads', authMiddleware, async (req: AuthRequest,
       content,
       brandId,
       projectId: projectId || undefined,
-      createdBy: req.user.id,
-      createdByName: req.user.name,
-      createdByEmail: req.user.email,
+      createdBy: req.user!.id,
+      createdByName: req.user!.name,
+      createdByEmail: req.user!.email,
       attachments: attachments || [],
     });
 
@@ -102,12 +102,12 @@ router.post('/brands/:brandId/threads', authMiddleware, async (req: AuthRequest,
 });
 
 // GET all threads for a brand (with filtering)
-router.get('/brands/:brandId/threads', authMiddleware, async (req: AuthRequest, res) => {
+router.get('/brands/:brandId/threads', authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { brandId } = req.params;
     const { projectId } = req.query;
 
-    console.log('GET THREADS REQUEST:', { brandId, projectId, userId: req.user.id });
+    console.log('GET THREADS REQUEST:', { brandId, projectId, userId: req.user!.id });
 
     // Verify brand exists
     const brand = await Brand.findById(brandId);
@@ -133,7 +133,7 @@ router.get('/brands/:brandId/threads', authMiddleware, async (req: AuthRequest, 
     // Filter threads based on user access
     const accessibleThreads = [];
     for (const thread of threads) {
-      const hasAccess = await canAccessThread(req.user.id, thread);
+      const hasAccess = await canAccessThread(req.user!.id, thread);
       if (hasAccess) {
         accessibleThreads.push(thread);
       }
@@ -152,7 +152,7 @@ router.get('/brands/:brandId/threads', authMiddleware, async (req: AuthRequest, 
 });
 
 // GET single thread with comments
-router.get('/threads/:threadId', authMiddleware, async (req: AuthRequest, res) => {
+router.get('/threads/:threadId', authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { threadId } = req.params;
 
@@ -162,7 +162,7 @@ router.get('/threads/:threadId', authMiddleware, async (req: AuthRequest, res) =
     }
 
     // Check access
-    const hasAccess = await canAccessThread(req.user.id, thread);
+    const hasAccess = await canAccessThread(req.user!.id, thread);
     if (!hasAccess) {
       return res.status(403).json({ message: 'Access denied' });
     }
@@ -180,7 +180,7 @@ router.get('/threads/:threadId', authMiddleware, async (req: AuthRequest, res) =
 });
 
 // GET projects for brand (for dropdown)
-router.get('/brands/:brandId/projects', authMiddleware, async (req: AuthRequest, res) => {
+router.get('/brands/:brandId/projects', authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { brandId } = req.params;
 
@@ -191,7 +191,7 @@ router.get('/brands/:brandId/projects', authMiddleware, async (req: AuthRequest,
 
     // Get projects where user is a team member
     const teamMemberships = await TeamMember.find({
-      userId: req.user.id,
+      userId: req.user!.id,
       status: 'active',
     }).populate('projectId', 'projectName brand');
 
@@ -210,7 +210,7 @@ router.get('/brands/:brandId/projects', authMiddleware, async (req: AuthRequest,
 });
 
 // UPDATE thread
-router.put('/threads/:threadId', authMiddleware, async (req: AuthRequest, res) => {
+router.put('/threads/:threadId', authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { threadId } = req.params;
     const { title, content, attachments } = req.body;
@@ -221,7 +221,7 @@ router.put('/threads/:threadId', authMiddleware, async (req: AuthRequest, res) =
     }
 
     // Check if user is the creator
-    if (thread.createdBy.toString() !== req.user.id) {
+    if (thread.createdBy.toString() !== req.user!.id) {
       return res.status(403).json({ message: 'You can only edit your own threads' });
     }
 
@@ -244,7 +244,7 @@ router.put('/threads/:threadId', authMiddleware, async (req: AuthRequest, res) =
 });
 
 // DELETE thread
-router.delete('/threads/:threadId', authMiddleware, async (req: AuthRequest, res) => {
+router.delete('/threads/:threadId', authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { threadId } = req.params;
 
@@ -254,7 +254,7 @@ router.delete('/threads/:threadId', authMiddleware, async (req: AuthRequest, res
     }
 
     // Check if user is the creator
-    if (thread.createdBy.toString() !== req.user.id) {
+    if (thread.createdBy.toString() !== req.user!.id) {
       return res.status(403).json({ message: 'You can only delete your own threads' });
     }
 
@@ -272,7 +272,7 @@ router.delete('/threads/:threadId', authMiddleware, async (req: AuthRequest, res
 });
 
 // LIKE/UNLIKE thread
-router.post('/threads/:threadId/like', authMiddleware, async (req: AuthRequest, res) => {
+router.post('/threads/:threadId/like', authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { threadId } = req.params;
 
@@ -281,7 +281,7 @@ router.post('/threads/:threadId/like', authMiddleware, async (req: AuthRequest, 
       return res.status(404).json({ message: 'Thread not found' });
     }
 
-    const userIdObj = req.user.id as any;
+    const userIdObj = req.user!.id as any;
     const likeIndex = thread.likes.findIndex(id => id.toString() === userIdObj);
 
     if (likeIndex > -1) {
@@ -306,7 +306,7 @@ router.post('/threads/:threadId/like', authMiddleware, async (req: AuthRequest, 
 });
 
 // CREATE comment
-router.post('/threads/:threadId/comments', authMiddleware, async (req: AuthRequest, res) => {
+router.post('/threads/:threadId/comments', authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { threadId } = req.params;
     const { content, attachments } = req.body;
@@ -321,7 +321,7 @@ router.post('/threads/:threadId/comments', authMiddleware, async (req: AuthReque
     }
 
     // Check access
-    const hasAccess = await canAccessThread(req.user.id, thread);
+    const hasAccess = await canAccessThread(req.user!.id, thread);
     if (!hasAccess) {
       return res.status(403).json({ message: 'Access denied' });
     }
@@ -329,9 +329,9 @@ router.post('/threads/:threadId/comments', authMiddleware, async (req: AuthReque
     const newComment = await ThreadComment.create({
       threadId,
       content,
-      createdBy: req.user.id,
-      createdByName: req.user.name,
-      createdByEmail: req.user.email,
+      createdBy: req.user!.id,
+      createdByName: req.user!.name,
+      createdByEmail: req.user!.email,
       attachments: attachments || [],
     });
 
@@ -350,7 +350,7 @@ router.post('/threads/:threadId/comments', authMiddleware, async (req: AuthReque
 });
 
 // UPDATE comment
-router.put('/comments/:commentId', authMiddleware, async (req: AuthRequest, res) => {
+router.put('/comments/:commentId', authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { commentId } = req.params;
     const { content, attachments } = req.body;
@@ -361,7 +361,7 @@ router.put('/comments/:commentId', authMiddleware, async (req: AuthRequest, res)
     }
 
     // Check if user is the creator
-    if (comment.createdBy.toString() !== req.user.id) {
+    if (comment.createdBy.toString() !== req.user!.id) {
       return res.status(403).json({ message: 'You can only edit your own comments' });
     }
 
@@ -383,7 +383,7 @@ router.put('/comments/:commentId', authMiddleware, async (req: AuthRequest, res)
 });
 
 // DELETE comment
-router.delete('/comments/:commentId', authMiddleware, async (req: AuthRequest, res) => {
+router.delete('/comments/:commentId', authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { commentId } = req.params;
 
@@ -393,7 +393,7 @@ router.delete('/comments/:commentId', authMiddleware, async (req: AuthRequest, r
     }
 
     // Check if user is the creator
-    if (comment.createdBy.toString() !== req.user.id) {
+    if (comment.createdBy.toString() !== req.user!.id) {
       return res.status(403).json({ message: 'You can only delete your own comments' });
     }
 
@@ -413,7 +413,7 @@ router.delete('/comments/:commentId', authMiddleware, async (req: AuthRequest, r
 });
 
 // LIKE/UNLIKE comment
-router.post('/comments/:commentId/like', authMiddleware, async (req: AuthRequest, res) => {
+router.post('/comments/:commentId/like', authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { commentId } = req.params;
 
@@ -422,7 +422,7 @@ router.post('/comments/:commentId/like', authMiddleware, async (req: AuthRequest
       return res.status(404).json({ message: 'Comment not found' });
     }
 
-    const userIdObj = req.user.id as any;
+    const userIdObj = req.user!.id as any;
     const likeIndex = comment.likes.findIndex(id => id.toString() === userIdObj);
 
     if (likeIndex > -1) {

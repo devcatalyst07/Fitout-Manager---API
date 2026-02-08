@@ -1,17 +1,17 @@
-import { Router } from "express";
-import { authMiddleware, AuthRequest } from "../middleware/auth";
+import express from 'express';
+import { authMiddleware } from "../middleware/auth";
 import Task from "../models/Task";
 import ActivityLog from "../models/ActivityLog";
 import Project from "../models/Projects";
 import Approval from "../models/Approval";
 
-const router = Router();
+const router = express.Router();
 
 // GET recent activity
 router.get(
   "/:projectId/overview/activity",
   authMiddleware,
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;
       const limit = parseInt(req.query.limit as string) || 10;
@@ -51,7 +51,7 @@ router.get(
 router.get(
   "/:projectId/overview/deadlines",
   authMiddleware,
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;
       const days = parseInt(req.query.days as string) || 7; // Default 7 days
@@ -88,7 +88,7 @@ router.get(
 router.get(
   "/:projectId/overview/stats",
   authMiddleware,
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;
 

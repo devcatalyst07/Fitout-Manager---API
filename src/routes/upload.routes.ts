@@ -1,9 +1,9 @@
-import { Router } from "express";
-import { authMiddleware, AuthRequest } from "../middleware/auth";
+import express from 'express';
+import { authMiddleware } from "../middleware/auth";
 import multer from "multer";
 import { v2 as cloudinary } from "cloudinary";
 
-const router = Router();
+const router = express.Router();
 
 // Configure Cloudinary
 cloudinary.config({
@@ -36,7 +36,7 @@ router.post(
   "/upload",
   authMiddleware,
   upload.single("file"),
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       if (!req.file) {
         return res.status(400).json({ message: "No file uploaded" });
@@ -74,7 +74,7 @@ router.post(
 router.delete(
   "/upload/:publicId",
   authMiddleware,
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { publicId } = req.params;
       const decodedPublicId = decodeURIComponent(publicId);

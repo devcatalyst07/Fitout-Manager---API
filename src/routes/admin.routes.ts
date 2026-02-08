@@ -1,17 +1,17 @@
-import { Router } from 'express';
+import express from 'express';
 import { authMiddleware } from '../middleware/auth';
-import { adminOnly } from '../middleware/role';
+import { requireAdmin as adminOnly } from '../middleware/permissions';
 import User from '../models/User';
 import Project from '../models/Projects'; // Import Project model
 
-const router = Router();
+const router = express.Router();
 
-router.get('/dashboard', authMiddleware, adminOnly, (req, res) => {
+router.get('/dashboard', authMiddleware, adminOnly, (req: express.Request, res: express.Response) => {
   res.json({ message: 'Welcome Admin' });
 });
 
 // Get dashboard statistics
-router.get('/dashboard/stats', authMiddleware, adminOnly, async (req, res) => {
+router.get('/dashboard/stats', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     // Filter only regular users (not admins)
     const regularUsers = await User.find({ role: 'user' }).sort({ createdAt: 1 });

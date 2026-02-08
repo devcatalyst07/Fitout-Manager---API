@@ -1,5 +1,5 @@
-import { Router } from "express";
-import { authMiddleware, AuthRequest } from "../middleware/auth";
+import express from 'express';
+import { authMiddleware } from "../middleware/auth";
 import {
   requirePermission,
   requireProjectAccess,
@@ -9,14 +9,14 @@ import Project from "../models/Projects";
 import User from "../models/User";
 import { activityHelpers } from "../utils/activityLogger";
 
-const router = Router();
+const router = express.Router();
 
 // GET all team members (Requires: project access)
 router.get(
   "/:projectId/team",
   authMiddleware,
   requireProjectAccess,
-  async (req, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;
 
@@ -52,7 +52,7 @@ router.post(
   "/:projectId/team",
   authMiddleware,
   requirePermission("projects-team-add"),
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;
       const { userEmail, roleId } = req.body;
@@ -92,7 +92,7 @@ router.post(
         projectId,
         roleId: roleId,
         status: "active",
-        addedBy: req.user.id,
+        addedBy: req.user!.id,
       });
 
       const populatedMember = await TeamMember.findById(newTeamMember._id)
@@ -103,8 +103,8 @@ router.post(
       if (populatedMember) {
         await activityHelpers.teamMemberAdded(
           projectId,
-          req.user.id,
-          req.user.name || "User",
+          req.user!.id,
+          req.user!.name || "User",
           (populatedMember.userId as any).name || "Unknown",
         );
       }
@@ -134,7 +134,7 @@ router.put(
   "/:projectId/team/:memberId",
   authMiddleware,
   requirePermission("projects-team-edit"),
-  async (req, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { memberId } = req.params;
       const { roleId, status } = req.body;
@@ -175,7 +175,7 @@ router.delete(
   "/:projectId/team/:memberId",
   authMiddleware,
   requirePermission("projects-team-delete"),
-  async (req, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { memberId } = req.params;
 

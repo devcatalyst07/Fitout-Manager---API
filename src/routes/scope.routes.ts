@@ -1,18 +1,18 @@
-import { Router } from 'express';
-import { authMiddleware, AuthRequest } from '../middleware/auth';
-import { adminOnly } from '../middleware/role';
+import express from 'express';
+import { authMiddleware } from '../middleware/auth';
+import { requireAdmin as adminOnly } from '../middleware/permissions';
 import Scope from '../models/Scope';
 import Workflow from '../models/Workflow';
 import Phase from '../models/Phase';
 import Task from '../models/Task';
 import Brand from '../models/Brand';
 
-const router = Router();
+const router = express.Router();
 
 // ==================== SCOPE ROUTES ====================
 
 // GET all scopes (with optional filtering)
-router.get('/', authMiddleware, adminOnly, async (req: AuthRequest, res) => {
+router.get('/', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { brandFilter, brandId } = req.query;
 
@@ -38,7 +38,7 @@ router.get('/', authMiddleware, adminOnly, async (req: AuthRequest, res) => {
 });
 
 // GET single scope with workflows
-router.get('/:id', authMiddleware, adminOnly, async (req, res) => {
+router.get('/:id', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { id } = req.params;
 
@@ -65,7 +65,7 @@ router.get('/:id', authMiddleware, adminOnly, async (req, res) => {
 });
 
 // GET scopes for project creation (filtered by brand)
-router.get('/for-brand/:brandName', authMiddleware, async (req, res) => {
+router.get('/for-brand/:brandName', authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { brandName } = req.params;
 
@@ -100,7 +100,7 @@ router.get('/for-brand/:brandName', authMiddleware, async (req, res) => {
 });
 
 // CREATE scope
-router.post('/', authMiddleware, adminOnly, async (req: AuthRequest, res) => {
+router.post('/', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { name, description, brandFilter, brandId } = req.body;
 
@@ -146,7 +146,7 @@ router.post('/', authMiddleware, adminOnly, async (req: AuthRequest, res) => {
       brandFilter,
       brandId: brandFilter === 'specific' ? brandId : undefined,
       brandName,
-      createdBy: req.user.id,
+      createdBy: req.user!.id,
     });
 
     const populatedScope = await Scope.findById(newScope._id)
@@ -164,7 +164,7 @@ router.post('/', authMiddleware, adminOnly, async (req: AuthRequest, res) => {
 });
 
 // UPDATE scope
-router.put('/:id', authMiddleware, adminOnly, async (req, res) => {
+router.put('/:id', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { id } = req.params;
     const { name, description, brandFilter, brandId, isActive } = req.body;
@@ -224,7 +224,7 @@ router.put('/:id', authMiddleware, adminOnly, async (req, res) => {
 });
 
 // DELETE scope (also deletes all workflows, phases, and tasks)
-router.delete('/:id', authMiddleware, adminOnly, async (req, res) => {
+router.delete('/:id', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { id } = req.params;
 
@@ -259,7 +259,7 @@ router.delete('/:id', authMiddleware, adminOnly, async (req, res) => {
 // ==================== WORKFLOW ROUTES ====================
 
 // GET workflows for a scope
-router.get('/:scopeId/workflows', authMiddleware, adminOnly, async (req, res) => {
+router.get('/:scopeId/workflows', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { scopeId } = req.params;
 
@@ -274,7 +274,7 @@ router.get('/:scopeId/workflows', authMiddleware, adminOnly, async (req, res) =>
 });
 
 // GET single workflow with phases and tasks
-router.get('/:scopeId/workflows/:workflowId', authMiddleware, adminOnly, async (req, res) => {
+router.get('/:scopeId/workflows/:workflowId', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { scopeId, workflowId } = req.params;
 
@@ -318,7 +318,7 @@ router.get('/:scopeId/workflows/:workflowId', authMiddleware, adminOnly, async (
 });
 
 // CREATE workflow
-router.post('/:scopeId/workflows', authMiddleware, adminOnly, async (req: AuthRequest, res) => {
+router.post('/:scopeId/workflows', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { scopeId } = req.params;
     const { name, description } = req.body;
@@ -342,7 +342,7 @@ router.post('/:scopeId/workflows', authMiddleware, adminOnly, async (req: AuthRe
       name,
       description,
       scopeId,
-      createdBy: req.user.id,
+      createdBy: req.user!.id,
     });
 
     res.status(201).json({
@@ -356,7 +356,7 @@ router.post('/:scopeId/workflows', authMiddleware, adminOnly, async (req: AuthRe
 });
 
 // UPDATE workflow
-router.put('/:scopeId/workflows/:workflowId', authMiddleware, adminOnly, async (req, res) => {
+router.put('/:scopeId/workflows/:workflowId', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { scopeId, workflowId } = req.params;
     const { name, description, isActive } = req.body;
@@ -394,7 +394,7 @@ router.put('/:scopeId/workflows/:workflowId', authMiddleware, adminOnly, async (
 });
 
 // DELETE workflow (also deletes all phases and tasks)
-router.delete('/:scopeId/workflows/:workflowId', authMiddleware, adminOnly, async (req, res) => {
+router.delete('/:scopeId/workflows/:workflowId', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { scopeId, workflowId } = req.params;
 
@@ -422,7 +422,7 @@ router.delete('/:scopeId/workflows/:workflowId', authMiddleware, adminOnly, asyn
 // ==================== PHASE ROUTES ====================
 
 // GET phases for a workflow
-router.get('/:scopeId/workflows/:workflowId/phases', authMiddleware, adminOnly, async (req, res) => {
+router.get('/:scopeId/workflows/:workflowId/phases', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { scopeId, workflowId } = req.params;
 
@@ -440,7 +440,7 @@ router.get('/:scopeId/workflows/:workflowId/phases', authMiddleware, adminOnly, 
 });
 
 // CREATE phase
-router.post('/:scopeId/workflows/:workflowId/phases', authMiddleware, adminOnly, async (req: AuthRequest, res) => {
+router.post('/:scopeId/workflows/:workflowId/phases', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { scopeId, workflowId } = req.params;
     const { name, description, order, color } = req.body;
@@ -470,7 +470,7 @@ router.post('/:scopeId/workflows/:workflowId/phases', authMiddleware, adminOnly,
       order: phaseOrder,
       color,
       isTemplate: true,
-      createdBy: req.user.id,
+      createdBy: req.user!.id,
     });
 
     res.status(201).json({
@@ -484,7 +484,7 @@ router.post('/:scopeId/workflows/:workflowId/phases', authMiddleware, adminOnly,
 });
 
 // UPDATE phase
-router.put('/:scopeId/workflows/:workflowId/phases/:phaseId', authMiddleware, adminOnly, async (req, res) => {
+router.put('/:scopeId/workflows/:workflowId/phases/:phaseId', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { scopeId, workflowId, phaseId } = req.params;
     const { name, description, order, color } = req.body;
@@ -517,7 +517,7 @@ router.put('/:scopeId/workflows/:workflowId/phases/:phaseId', authMiddleware, ad
 });
 
 // DELETE phase (also deletes all tasks in this phase)
-router.delete('/:scopeId/workflows/:workflowId/phases/:phaseId', authMiddleware, adminOnly, async (req, res) => {
+router.delete('/:scopeId/workflows/:workflowId/phases/:phaseId', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { scopeId, workflowId, phaseId } = req.params;
 
@@ -548,7 +548,7 @@ router.delete('/:scopeId/workflows/:workflowId/phases/:phaseId', authMiddleware,
 // ==================== TASK ROUTES ====================
 
 // GET tasks for a phase
-router.get('/:scopeId/workflows/:workflowId/phases/:phaseId/tasks', authMiddleware, adminOnly, async (req, res) => {
+router.get('/:scopeId/workflows/:workflowId/phases/:phaseId/tasks', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { scopeId, workflowId, phaseId } = req.params;
 
@@ -567,7 +567,7 @@ router.get('/:scopeId/workflows/:workflowId/phases/:phaseId/tasks', authMiddlewa
 });
 
 // CREATE task
-router.post('/:scopeId/workflows/:workflowId/phases/:phaseId/tasks', authMiddleware, adminOnly, async (req: AuthRequest, res) => {
+router.post('/:scopeId/workflows/:workflowId/phases/:phaseId/tasks', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { scopeId, workflowId, phaseId } = req.params;
     const { title, description, priority, estimateHours, order } = req.body;
@@ -606,7 +606,7 @@ router.post('/:scopeId/workflows/:workflowId/phases/:phaseId/tasks', authMiddlew
       order: taskOrder,
       isTemplate: true,
       assignees: [], // Templates don't have assignees
-      createdBy: req.user.id,
+      createdBy: req.user!.id,
     });
 
     res.status(201).json({
@@ -620,7 +620,7 @@ router.post('/:scopeId/workflows/:workflowId/phases/:phaseId/tasks', authMiddlew
 });
 
 // UPDATE task
-router.put('/:scopeId/workflows/:workflowId/phases/:phaseId/tasks/:taskId', authMiddleware, adminOnly, async (req, res) => {
+router.put('/:scopeId/workflows/:workflowId/phases/:phaseId/tasks/:taskId', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { scopeId, workflowId, phaseId, taskId } = req.params;
     const { title, description, priority, estimateHours, order } = req.body;
@@ -654,7 +654,7 @@ router.put('/:scopeId/workflows/:workflowId/phases/:phaseId/tasks/:taskId', auth
 });
 
 // DELETE task
-router.delete('/:scopeId/workflows/:workflowId/phases/:phaseId/tasks/:taskId', authMiddleware, adminOnly, async (req, res) => {
+router.delete('/:scopeId/workflows/:workflowId/phases/:phaseId/tasks/:taskId', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { scopeId, workflowId, phaseId, taskId } = req.params;
 
@@ -682,7 +682,7 @@ router.delete('/:scopeId/workflows/:workflowId/phases/:phaseId/tasks/:taskId', a
 // ==================== BULK IMPORT/EXPORT ====================
 
 // Export workflow structure
-router.get('/:scopeId/workflows/:workflowId/export', authMiddleware, adminOnly, async (req, res) => {
+router.get('/:scopeId/workflows/:workflowId/export', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
     const { scopeId, workflowId } = req.params;
 

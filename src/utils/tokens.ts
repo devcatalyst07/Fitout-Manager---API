@@ -22,10 +22,10 @@ export interface RefreshTokenPayload {
  */
 export const generateAccessToken = (payload: TokenPayload): string => {
   return jwt.sign(payload, securityConfig.jwt.accessSecret, {
-    expiresIn: securityConfig.jwt.accessExpiry,
+    expiresIn: securityConfig.jwt.accessExpiry as any,
     issuer: 'fitout-manager-api',
     audience: 'fitout-manager-frontend',
-  } as any); // Type assertion to fix JWT type issue
+  });
 };
 
 /**
@@ -33,10 +33,10 @@ export const generateAccessToken = (payload: TokenPayload): string => {
  */
 export const generateRefreshToken = (payload: RefreshTokenPayload): string => {
   return jwt.sign(payload, securityConfig.jwt.refreshSecret, {
-    expiresIn: securityConfig.jwt.refreshExpiry,
+    expiresIn: securityConfig.jwt.refreshExpiry as any,
     issuer: 'fitout-manager-api',
     audience: 'fitout-manager-frontend',
-  } as any); // Type assertion to fix JWT type issue
+  });
 };
 
 /**

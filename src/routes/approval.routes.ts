@@ -1,16 +1,17 @@
-import { Router } from "express";
-import { authMiddleware, AuthRequest } from "../middleware/auth";
-import { adminOnly } from "../middleware/role";
+import express from 'express';
+import { authMiddleware } from "../middleware/auth";
+import { requireAdmin as adminOnly } from '../middleware/permissions';
 import Approval from "../models/Approval";
+import mongoose, { Types } from 'mongoose';
 
-const router = Router();
+const router = express.Router();
 
 // GET all pending approvals for a project
 router.get(
   "/:projectId/approvals",
   authMiddleware,
   adminOnly,
-  async (req, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;
       const { status } = req.query; // optional filter lang 'to
@@ -40,7 +41,7 @@ router.get(
   "/:projectId/approvals/stats",
   authMiddleware,
   adminOnly,
-  async (req, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;
 
@@ -85,7 +86,7 @@ router.put(
   "/:projectId/approvals/:approvalId/approve",
   authMiddleware,
   adminOnly,
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { approvalId } = req.params;
 
@@ -101,7 +102,7 @@ router.put(
 
       // FIXED: Changed "Approved" to "approved"
       approval.status = "approved";
-      approval.approvedBy = req.user.id;
+      approval.approvedBy = req.user!.id as any;
       approval.approvedAt = new Date();
       await approval.save();
 
@@ -123,7 +124,7 @@ router.put(
   "/:projectId/approvals/:approvalId/reject",
   authMiddleware,
   adminOnly,
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { approvalId } = req.params;
       const { reason } = req.body;
@@ -140,7 +141,7 @@ router.put(
 
       // FIXED: Changed "Rejected" to "rejected"
       approval.status = "rejected";
-      approval.approvedBy = req.user.id;
+      approval.approvedBy = new Types.ObjectId(req.user!.id);
       approval.approvedAt = new Date();
       approval.rejectionReason = reason || "No reason provided";
       await approval.save();

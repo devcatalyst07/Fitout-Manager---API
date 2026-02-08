@@ -1,17 +1,17 @@
-import { Router } from "express";
-import { authMiddleware, AuthRequest } from "../middleware/auth";
+import express from 'express';
+import { authMiddleware } from "../middleware/auth";
 import Task from "../models/Task";
 import Project from "../models/Projects";
 import BudgetItem from "../models/BudgetItem";
 import Approval from "../models/Approval";
 
-const router = Router();
+const router = express.Router();
 
 // GET project insights (ENHANCED)
 router.get(
   "/:projectId/insights",
   authMiddleware,
-  async (req: AuthRequest, res) => {
+  async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;
 
