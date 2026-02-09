@@ -1,6 +1,3 @@
-/**
- * Get allowed CORS origins with proper fallbacks
- */
 const getAllowedOrigins = (): string[] => {
   const origins = [
     process.env.FRONTEND_URL,
@@ -34,6 +31,19 @@ const isSecure = (): boolean => {
 };
 
 /**
+ * Get cookie domain based on environment
+ */
+const getCookieDomain = (): string | undefined => {
+  // In production on Vercel, don't set domain to allow same-site cookies
+  if (process.env.NODE_ENV === 'production') {
+    return undefined; // Let browser handle it
+  }
+  
+  // For local development
+  return process.env.COOKIE_DOMAIN || undefined;
+};
+
+/**
  * Determine SameSite cookie setting
  */
 const getSameSite = (): 'strict' | 'lax' | 'none' => {
@@ -42,7 +52,7 @@ const getSameSite = (): 'strict' | 'lax' | 'none' => {
     return process.env.COOKIE_SAME_SITE as 'strict' | 'lax' | 'none';
   }
   
-  // In production with different domains, use 'none'
+  // In production with credentials, use 'none' for cross-site
   // In development, use 'lax'
   return process.env.NODE_ENV === 'production' ? 'none' : 'lax';
 };
@@ -62,7 +72,21 @@ export const securityConfig = {
    * CORS Configuration
    */
   cors: {
-    origin: getAllowedOrigins(),
+    origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+      const allowedOrigins = getAllowedOrigins();
+      
+      // Allow requests with no origin (like mobile apps, Postman, or server-to-server)
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.error('❌ CORS blocked origin:', origin);
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: [
@@ -87,7 +111,7 @@ export const securityConfig = {
       secure: isSecure(),
       sameSite: getSameSite(),
       maxAge: 15 * 60 * 1000, // 15 minutes
-      domain: process.env.COOKIE_DOMAIN || undefined,
+      domain: getCookieDomain(),
     },
     refresh: {
       name: process.env.REFRESH_COOKIE_NAME || 'fitout_refresh',
@@ -95,7 +119,7 @@ export const securityConfig = {
       secure: isSecure(),
       sameSite: getSameSite(),
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-      domain: process.env.COOKIE_DOMAIN || undefined,
+      domain: getCookieDomain(),
       path: '/api/auth',
     },
   },
@@ -160,4 +184,4 @@ console.log('   - Environment:', process.env.NODE_ENV || 'development');
 console.log('   - CSRF Enabled:', securityConfig.csrf.enabled);
 console.log('   - Secure Cookies:', isSecure());
 console.log('   - SameSite:', getSameSite());
-console.log('   - Cookie Domain:', process.env.COOKIE_DOMAIN || 'none (browser default)');
+console.log('   - Cookie Domain:', getCookieDomain() || 'none (browser default)');
