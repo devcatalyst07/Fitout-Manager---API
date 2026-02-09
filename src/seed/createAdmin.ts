@@ -1,28 +1,33 @@
-import bcrypt from 'bcryptjs';
 import User from '../models/User';
+import bcrypt from 'bcryptjs';
 
 export const createAdmin = async () => {
   try {
-    // Check if admin already exists
-    const exists = await User.findOne({ email: 'superadmin@fitoutmanager.com' });
-    
-    if (exists) {
-      console.log('Super Admin already exists');
-      return;
+    // Check if admin exists
+    const adminExists = await User.findOne({ role: 'admin' });
+
+    if (!adminExists) {
+      // Create admin user
+      const hashedPassword = await bcrypt.hash('bryankaafitoutmanager', 12);
+
+      await User.create({
+        name: 'Super Admin',
+        email: 'superadmin@fitoutmanager.com',
+        password: hashedPassword,
+        role: 'admin',
+        subscriptionType: 'Enterprise',
+        totalProjects: 0,
+        isActive: true,
+        tokenVersion: 0,
+      });
+
+      console.log('Admin user created');
+      console.log('Email: superadmin@fitoutmanager.com');
+      console.log('Password: bryankaafitoutmanager');
+    } else {
+      console.log('Admin user already exists');
     }
-
-    const hashedPassword = await bcrypt.hash('bryankaafitoutmanager', 10);
-
-    await User.create({
-      name: 'Bryan Kaa',
-      email: 'superadmin@fitoutmanager.com',
-      password: hashedPassword,
-      role: 'admin',
-      totalProjects: 0,
-    });
-
-    console.log('Super Admin (Bryan Kaa) created');
   } catch (error) {
-    console.error('Error creating admin:', error);
+    console.error('Failed to create admin:', error);
   }
 };

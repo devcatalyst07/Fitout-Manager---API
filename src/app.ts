@@ -43,7 +43,7 @@ initRedis().catch((err) => {
   console.error('Redis initialization failed:', err);
 });
 
-// Trust proxy (required for Vercel)
+// Trust proxy (required for Vercel and other reverse proxies)
 app.set('trust proxy', 1);
 
 // Security headers
@@ -88,13 +88,13 @@ app.get('/', (_, res) => {
     status: 'online',
     version: '2.0.0',
     security: 'enhanced',
+    csrf_enabled: securityConfig.csrf.enabled,
   });
 });
 
-// CSRF token generation for authenticated routes
+// CSRF middleware - Apply to all /api routes
+// The middleware itself handles skipping for login/register/GET requests
 app.use('/api', setCsrfToken);
-
-// CSRF verification for state-changing requests
 app.use('/api', verifyCsrf);
 
 // API Routes

@@ -1,181 +1,233 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 import User from '../models/User';
-import TeamMember from '../models/TeamMember';
+import { authMiddleware } from '../middleware/auth';
+import { securityConfig } from '../config/security';
 import {
   generateAccessToken,
   generateRefreshToken,
-  generateSessionId,
   verifyRefreshToken,
-  TokenPayload,
-  RefreshTokenPayload,
+  generateSessionId,
 } from '../utils/tokens';
-import { securityConfig } from '../config/security';
-import { authMiddleware } from '../middleware/auth';
+import { clearCsrfToken } from '../middleware/csrf';
+import { cacheUser, invalidateUserCache } from '../utils/cache';
 import { authRateLimiter } from '../middleware/security';
-import { setCsrfToken } from '../middleware/csrf';
-import { sessionStore } from '../utils/redis';
 import { generateFingerprint } from '../middleware/security';
-import { createAdmin } from '../seed/createAdmin';
 
 const router = express.Router();
 
 /**
- * POST /api/auth/login
- * Login with credentials and set secure cookies
+ * Register - Create new user account
  */
-router.post('/login', authRateLimiter, setCsrfToken, async (req: express.Request, res: express.Response) => {
-  try {
-    // Ensure admin exists
-    await createAdmin();
+router.post(
+  '/register',
+  authRateLimiter,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { name, email, password, subscriptionType } = req.body;
 
-    const { email, password, type, rememberMe } = req.body;
-
-    // Validation
-    if (!email || !password || !type) {
-      return res.status(400).json({
-        message: 'Email, password, and type are required',
-        code: 'VALIDATION_ERROR',
-      });
-    }
-
-    // Find user
-    const user = await User.findOne({ email: email.toLowerCase() });
-
-    if (!user) {
-      return res.status(401).json({
-        message: 'Invalid credentials',
-        code: 'INVALID_CREDENTIALS',
-      });
-    }
-
-    // Check role matches type
-    if (type !== user.role) {
-      return res.status(403).json({
-        message: `Please login as ${user.role}`,
-        code: 'ROLE_MISMATCH',
-      });
-    }
-
-    // Verify password
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      return res.status(401).json({
-        message: 'Invalid credentials',
-        code: 'INVALID_CREDENTIALS',
-      });
-    }
-
-    // Get user's role for regular users
-    let roleId = null;
-    if (user.role === 'user') {
-      const teamMember = await TeamMember.findOne({
-        userId: user._id,
-        status: 'active',
-      })
-        .populate('roleId', '_id name')
-        .sort({ createdAt: -1 });
-
-      if (teamMember && teamMember.roleId) {
-        roleId = teamMember.roleId._id;
+      // Validation
+      if (!name || !email || !password) {
+        return res.status(400).json({
+          message: 'All fields are required',
+          code: 'VALIDATION_ERROR',
+        });
       }
-    }
 
-    // Generate session ID
-    const sessionId = generateSessionId();
+      // Check if user already exists
+      const existingUser = await User.findOne({ email: email.toLowerCase() });
+      if (existingUser) {
+        return res.status(400).json({
+          message: 'User already exists',
+          code: 'USER_EXISTS',
+        });
+      }
 
-    // Get token version for revocation support
-    let tokenVersion = await sessionStore.getTokenVersion(user._id.toString());
-    if (tokenVersion === null) {
-      tokenVersion = 0;
-      await sessionStore.setTokenVersion(user._id.toString(), tokenVersion);
-    }
+      // Hash password
+      const hashedPassword = await bcrypt.hash(password, 12);
 
-    // Generate tokens
-    const accessTokenPayload: TokenPayload = {
-      id: user._id.toString(),
-      email: user.email,
-      role: user.role,
-      name: user.name,
-      roleId: roleId?.toString(),
-      sessionId,
-    };
+      // Create user
+      const user = await User.create({
+        name,
+        email: email.toLowerCase(),
+        password: hashedPassword,
+        role: 'user',
+        subscriptionType: subscriptionType || 'Starter',
+      });
 
-    const refreshTokenPayload: RefreshTokenPayload = {
-      id: user._id.toString(),
-      sessionId,
-      tokenVersion,
-    };
+      // Generate session ID
+      const sessionId = generateSessionId();
 
-    const accessToken = generateAccessToken(accessTokenPayload);
-    const refreshToken = generateRefreshToken(refreshTokenPayload);
-
-    // Store session in Redis
-    const fingerprint = generateFingerprint(req);
-    await sessionStore.set(
-      sessionId,
-      {
-        userId: user._id.toString(),
+      // Generate tokens
+      const accessToken = generateAccessToken({
+        id: user._id.toString(),
         email: user.email,
         role: user.role,
-        fingerprint,
-        tokenVersion,
-        createdAt: new Date().toISOString(),
-      },
-      rememberMe ? 604800 : 86400 // 7 days if remember me, else 1 day
-    );
-
-    // Set access token cookie (short-lived)
-    res.cookie(securityConfig.cookie.sessionName, accessToken, {
-      httpOnly: true,
-      secure: securityConfig.cookie.secure,
-      sameSite: securityConfig.cookie.sameSite,
-      maxAge: securityConfig.cookie.maxAge.access,
-      domain: securityConfig.cookie.domain,
-      path: '/',
-    });
-
-    // Set refresh token cookie (long-lived)
-    res.cookie(securityConfig.cookie.refreshName, refreshToken, {
-      httpOnly: true,
-      secure: securityConfig.cookie.secure,
-      sameSite: securityConfig.cookie.sameSite,
-      maxAge: rememberMe
-        ? securityConfig.cookie.maxAge.refresh
-        : securityConfig.cookie.maxAge.refresh / 7, // 1 day if not remember me
-      domain: securityConfig.cookie.domain,
-      path: '/api/auth/refresh',
-    });
-
-    console.log('✅ Login successful:', { email, role: user.role });
-
-    res.json({
-      message: 'Login successful',
-      user: {
-        id: user._id,
         name: user.name,
+        sessionId,
+      });
+
+      const refreshToken = generateRefreshToken({
+        id: user._id.toString(),
+        sessionId,
+        tokenVersion: 0,
+      });
+
+      // Set cookies
+      res.cookie(securityConfig.cookies.session.name, accessToken, {
+        httpOnly: true,
+        secure: securityConfig.cookies.session.secure,
+        sameSite: securityConfig.cookies.session.sameSite,
+        maxAge: securityConfig.cookies.session.maxAge,
+        domain: securityConfig.cookies.session.domain,
+      });
+
+      res.cookie(securityConfig.cookies.refresh.name, refreshToken, {
+        httpOnly: true,
+        secure: securityConfig.cookies.refresh.secure,
+        sameSite: securityConfig.cookies.refresh.sameSite,
+        maxAge: securityConfig.cookies.refresh.maxAge,
+        domain: securityConfig.cookies.refresh.domain,
+        path: securityConfig.cookies.refresh.path,
+      });
+
+      // Cache user
+      await cacheUser(user._id.toString(), {
+        id: user._id.toString(),
         email: user.email,
         role: user.role,
-        roleId,
-      },
-    });
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({
-      message: 'Internal server error',
-      code: 'SERVER_ERROR',
-    });
+        name: user.name,
+      });
+
+      res.status(201).json({
+        message: 'User registered successfully',
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+        },
+      });
+    } catch (error: any) {
+      console.error('Registration error:', error);
+      res.status(500).json({
+        message: 'Registration failed',
+        code: 'REGISTRATION_ERROR',
+      });
+    }
   }
-});
+);
 
 /**
- * POST /api/auth/refresh
- * Refresh access token using refresh token
+ * Login - Authenticate user
+ */
+router.post(
+  '/login',
+  authRateLimiter,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { email, password, rememberMe } = req.body;
+
+      // Validation
+      if (!email || !password) {
+        return res.status(400).json({
+          message: 'Email and password are required',
+          code: 'VALIDATION_ERROR',
+        });
+      }
+
+      // Find user
+      const user = await User.findOne({ email: email.toLowerCase() });
+      if (!user) {
+        return res.status(401).json({
+          message: 'Invalid credentials',
+          code: 'INVALID_CREDENTIALS',
+        });
+      }
+
+      // Check password
+      const isPasswordValid = await bcrypt.compare(password, user.password);
+      if (!isPasswordValid) {
+        return res.status(401).json({
+          message: 'Invalid credentials',
+          code: 'INVALID_CREDENTIALS',
+        });
+      }
+
+      // Generate session ID and fingerprint
+      const sessionId = generateSessionId();
+      const fingerprint = generateFingerprint(req);
+
+      // Generate tokens
+      const accessToken = generateAccessToken({
+        id: user._id.toString(),
+        email: user.email,
+        role: user.role,
+        name: user.name,
+        roleId: user.roleId?.toString(),
+        sessionId,
+      });
+
+      const refreshToken = generateRefreshToken({
+        id: user._id.toString(),
+        sessionId,
+        tokenVersion: user.tokenVersion || 0,
+      });
+
+      // Set cookies
+      res.cookie(securityConfig.cookies.session.name, accessToken, {
+        httpOnly: true,
+        secure: securityConfig.cookies.session.secure,
+        sameSite: securityConfig.cookies.session.sameSite,
+        maxAge: securityConfig.cookies.session.maxAge,
+        domain: securityConfig.cookies.session.domain,
+      });
+
+      res.cookie(securityConfig.cookies.refresh.name, refreshToken, {
+        httpOnly: true,
+        secure: securityConfig.cookies.refresh.secure,
+        sameSite: securityConfig.cookies.refresh.sameSite,
+        maxAge: securityConfig.cookies.refresh.maxAge,
+        domain: securityConfig.cookies.refresh.domain,
+        path: securityConfig.cookies.refresh.path,
+      });
+
+      // Cache user
+      await cacheUser(user._id.toString(), {
+        id: user._id.toString(),
+        email: user.email,
+        role: user.role,
+        name: user.name,
+        roleId: user.roleId?.toString(),
+      });
+
+      res.json({
+        message: 'Login successful',
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          roleId: user.roleId,
+        },
+      });
+    } catch (error: any) {
+      console.error('Login error:', error);
+      res.status(500).json({
+        message: 'Login failed',
+        code: 'LOGIN_ERROR',
+      });
+    }
+  }
+);
+
+/**
+ * Refresh - Get new access token using refresh token
  */
 router.post('/refresh', async (req: express.Request, res: express.Response) => {
   try {
-    // Get refresh token from cookie
-    const refreshToken = req.cookies[securityConfig.cookie.refreshName];
+    const refreshToken = req.cookies[securityConfig.cookies.refresh.name];
 
     if (!refreshToken) {
       return res.status(401).json({
@@ -185,46 +237,18 @@ router.post('/refresh', async (req: express.Request, res: express.Response) => {
     }
 
     // Verify refresh token
-    let decoded: RefreshTokenPayload;
+    let payload;
     try {
-      decoded = verifyRefreshToken(refreshToken);
+      payload = verifyRefreshToken(refreshToken);
     } catch (error) {
       return res.status(401).json({
         message: 'Invalid refresh token',
-        code: 'REFRESH_TOKEN_INVALID',
+        code: 'INVALID_REFRESH_TOKEN',
       });
     }
 
-    // Verify session exists
-    const sessionData = await sessionStore.get(decoded.sessionId);
-    if (!sessionData) {
-      return res.status(401).json({
-        message: 'Session expired',
-        code: 'SESSION_EXPIRED',
-      });
-    }
-
-    // Verify token version
-    const currentVersion = await sessionStore.getTokenVersion(decoded.id);
-    if (currentVersion !== null && decoded.tokenVersion !== currentVersion) {
-      return res.status(401).json({
-        message: 'Session revoked',
-        code: 'SESSION_REVOKED',
-      });
-    }
-
-    // Verify fingerprint
-    const fingerprint = generateFingerprint(req);
-    if (!sessionData.fingerprint || sessionData.fingerprint !== fingerprint) {
-      await sessionStore.delete(decoded.sessionId);
-      return res.status(401).json({
-        message: 'Session invalid',
-        code: 'SESSION_HIJACK_DETECTED',
-      });
-    }
-
-    // Get user data
-    const user = await User.findById(decoded.id).select('-password');
+    // Get user
+    const user = await User.findById(payload.id);
     if (!user) {
       return res.status(401).json({
         message: 'User not found',
@@ -232,164 +256,59 @@ router.post('/refresh', async (req: express.Request, res: express.Response) => {
       });
     }
 
-    // Get role for regular users
-    let roleId = null;
-    if (user.role === 'user') {
-      const teamMember = await TeamMember.findOne({
-        userId: user._id,
-        status: 'active',
-      })
-        .populate('roleId', '_id name')
-        .sort({ createdAt: -1 });
-
-      if (teamMember && teamMember.roleId) {
-        roleId = teamMember.roleId._id;
-      }
+    // Check token version
+    if (user.tokenVersion !== payload.tokenVersion) {
+      return res.status(401).json({
+        message: 'Token has been revoked',
+        code: 'TOKEN_REVOKED',
+      });
     }
 
+    // Generate new session ID
+    const newSessionId = generateSessionId();
+
     // Generate new access token
-    const accessTokenPayload: TokenPayload = {
+    const newAccessToken = generateAccessToken({
       id: user._id.toString(),
       email: user.email,
       role: user.role,
       name: user.name,
-      roleId: roleId?.toString(),
-      sessionId: decoded.sessionId,
-    };
-
-    const newAccessToken = generateAccessToken(accessTokenPayload);
+      roleId: user.roleId?.toString(),
+      sessionId: newSessionId,
+    });
 
     // Set new access token cookie
-    res.cookie(securityConfig.cookie.sessionName, newAccessToken, {
+    res.cookie(securityConfig.cookies.session.name, newAccessToken, {
       httpOnly: true,
-      secure: securityConfig.cookie.secure,
-      sameSite: securityConfig.cookie.sameSite,
-      maxAge: securityConfig.cookie.maxAge.access,
-      domain: securityConfig.cookie.domain,
-      path: '/',
+      secure: securityConfig.cookies.session.secure,
+      sameSite: securityConfig.cookies.session.sameSite,
+      maxAge: securityConfig.cookies.session.maxAge,
+      domain: securityConfig.cookies.session.domain,
     });
 
-    res.json({
-      message: 'Token refreshed',
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        roleId,
-      },
-    });
-  } catch (error) {
+    res.json({ message: 'Token refreshed successfully' });
+  } catch (error: any) {
     console.error('Refresh error:', error);
     res.status(500).json({
-      message: 'Internal server error',
-      code: 'SERVER_ERROR',
+      message: 'Token refresh failed',
+      code: 'REFRESH_ERROR',
     });
   }
 });
 
 /**
- * POST /api/auth/logout
- * Logout and clear cookies
- */
-router.post('/logout', authMiddleware, async (req: express.Request, res: express.Response) => {
-  try {
-    // Get session ID from token
-    const sessionId = req.user?.sessionId;
-
-    // Delete session from Redis
-    if (sessionId) {
-      await sessionStore.delete(sessionId);
-    }
-
-    // Clear cookies
-    res.clearCookie(securityConfig.cookie.sessionName, {
-      httpOnly: true,
-      secure: securityConfig.cookie.secure,
-      sameSite: securityConfig.cookie.sameSite,
-      domain: securityConfig.cookie.domain,
-      path: '/',
-    });
-
-    res.clearCookie(securityConfig.cookie.refreshName, {
-      httpOnly: true,
-      secure: securityConfig.cookie.secure,
-      sameSite: securityConfig.cookie.sameSite,
-      domain: securityConfig.cookie.domain,
-      path: '/api/auth/refresh',
-    });
-
-    res.clearCookie(securityConfig.csrf.cookieName, {
-      httpOnly: true,
-      secure: securityConfig.cookie.secure,
-      sameSite: securityConfig.cookie.sameSite,
-      domain: securityConfig.cookie.domain,
-    });
-
-    res.json({ message: 'Logout successful' });
-  } catch (error) {
-    console.error('Logout error:', error);
-    res.status(500).json({
-      message: 'Internal server error',
-      code: 'SERVER_ERROR',
-    });
-  }
-});
-
-/**
- * POST /api/auth/logout-all
- * Logout from all devices by incrementing token version
- */
-router.post('/logout-all', authMiddleware, async (req: express.Request, res: express.Response) => {
-  try {
-    const userId = req.user?.id;
-
-    if (!userId) {
-      return res.status(401).json({ message: 'User not found' });
-    }
-
-    // Increment token version to invalidate all tokens
-    const currentVersion = (await sessionStore.getTokenVersion(userId)) || 0;
-    await sessionStore.setTokenVersion(userId, currentVersion + 1);
-
-    // Delete all user sessions
-    await sessionStore.deleteUserSessions(userId);
-
-    // Clear cookies for current session
-    res.clearCookie(securityConfig.cookie.sessionName, {
-      httpOnly: true,
-      secure: securityConfig.cookie.secure,
-      sameSite: securityConfig.cookie.sameSite,
-      domain: securityConfig.cookie.domain,
-      path: '/',
-    });
-
-    res.clearCookie(securityConfig.cookie.refreshName, {
-      httpOnly: true,
-      secure: securityConfig.cookie.secure,
-      sameSite: securityConfig.cookie.sameSite,
-      domain: securityConfig.cookie.domain,
-      path: '/api/auth/refresh',
-    });
-
-    res.json({ message: 'Logged out from all devices' });
-  } catch (error) {
-    console.error('Logout all error:', error);
-    res.status(500).json({
-      message: 'Internal server error',
-      code: 'SERVER_ERROR',
-    });
-  }
-});
-
-/**
- * GET /api/auth/me
- * Get current user session
+ * Get current user
  */
 router.get('/me', authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
-    const user = await User.findById(req.user?.id).select('-password');
+    if (!req.user) {
+      return res.status(401).json({
+        message: 'Not authenticated',
+        code: 'NOT_AUTHENTICATED',
+      });
+    }
 
+    const user = await User.findById(req.user.id).select('-password');
     if (!user) {
       return res.status(404).json({
         message: 'User not found',
@@ -397,104 +316,112 @@ router.get('/me', authMiddleware, async (req: express.Request, res: express.Resp
       });
     }
 
-    // Get role for regular users
-    let roleId = null;
-    if (user.role === 'user') {
-      const teamMember = await TeamMember.findOne({
-        userId: user._id,
-        status: 'active',
-      })
-        .populate('roleId', '_id name')
-        .sort({ createdAt: -1 });
-
-      if (teamMember && teamMember.roleId) {
-        roleId = teamMember.roleId._id;
-      }
-    }
-
     res.json({
       user: {
         id: user._id,
         name: user.name,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        username: user.username,
         email: user.email,
         role: user.role,
-        roleId,
-        profilePhoto: user.profilePhoto,
+        roleId: user.roleId,
       },
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Get me error:', error);
     res.status(500).json({
-      message: 'Internal server error',
-      code: 'SERVER_ERROR',
+      message: 'Failed to get user',
+      code: 'GET_USER_ERROR',
     });
   }
 });
 
 /**
- * POST /api/auth/register
- * Register new user (user role only)
+ * Logout - Clear session and refresh cookies
  */
-router.post('/register', authRateLimiter, async (req: express.Request, res: express.Response) => {
+router.post('/logout', authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
-    const { name, email, password, subscriptionType } = req.body;
-
-    // Validation
-    if (!name || !email || !password) {
-      return res.status(400).json({
-        message: 'All fields are required',
-        code: 'VALIDATION_ERROR',
-      });
-    }
-
-    if (password.length < 8) {
-      return res.status(400).json({
-        message: 'Password must be at least 8 characters',
-        code: 'PASSWORD_TOO_SHORT',
-      });
-    }
-
-    // Check if user exists
-    const existingUser = await User.findOne({ email: email.toLowerCase() });
-    if (existingUser) {
-      return res.status(400).json({
-        message: 'User already exists',
-        code: 'USER_EXISTS',
-      });
-    }
-
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Create user
-    const newUser = await User.create({
-      name,
-      email: email.toLowerCase(),
-      password: hashedPassword,
-      role: 'user',
-      subscriptionType: subscriptionType || 'Starter',
-      totalProjects: 0,
+    // Clear session cookie
+    res.clearCookie(securityConfig.cookies.session.name, {
+      httpOnly: true,
+      secure: securityConfig.cookies.session.secure,
+      sameSite: securityConfig.cookies.session.sameSite,
+      domain: securityConfig.cookies.session.domain,
     });
 
-    console.log('✅ User registered:', { email, name });
-
-    res.status(201).json({
-      message: 'Registration successful',
-      user: {
-        id: newUser._id,
-        name: newUser.name,
-        email: newUser.email,
-        role: newUser.role,
-      },
+    // Clear refresh cookie
+    res.clearCookie(securityConfig.cookies.refresh.name, {
+      httpOnly: true,
+      secure: securityConfig.cookies.refresh.secure,
+      sameSite: securityConfig.cookies.refresh.sameSite,
+      domain: securityConfig.cookies.refresh.domain,
+      path: securityConfig.cookies.refresh.path,
     });
-  } catch (error) {
-    console.error('Registration error:', error);
+
+    // Clear CSRF token from memory
+    if (req.user) {
+      clearCsrfToken((req.user as any).id);
+    }
+
+    // Invalidate user cache
+    if (req.user) {
+      await invalidateUserCache(req.user.id);
+    }
+
+    res.json({ message: 'Logged out successfully' });
+  } catch (error: any) {
+    console.error('Logout error:', error);
     res.status(500).json({
-      message: 'Internal server error',
-      code: 'SERVER_ERROR',
+      message: 'Logout failed',
+      code: 'LOGOUT_ERROR',
+    });
+  }
+});
+
+/**
+ * Logout all - Revoke all refresh tokens
+ */
+router.post('/logout-all', authMiddleware, async (req: express.Request, res: express.Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        message: 'Not authenticated',
+        code: 'NOT_AUTHENTICATED',
+      });
+    }
+
+    // Increment token version to invalidate all refresh tokens
+    await User.findByIdAndUpdate(req.user.id, {
+      $inc: { tokenVersion: 1 },
+    });
+
+    // Clear session cookie
+    res.clearCookie(securityConfig.cookies.session.name, {
+      httpOnly: true,
+      secure: securityConfig.cookies.session.secure,
+      sameSite: securityConfig.cookies.session.sameSite,
+      domain: securityConfig.cookies.session.domain,
+    });
+
+    // Clear refresh cookie
+    res.clearCookie(securityConfig.cookies.refresh.name, {
+      httpOnly: true,
+      secure: securityConfig.cookies.refresh.secure,
+      sameSite: securityConfig.cookies.refresh.sameSite,
+      domain: securityConfig.cookies.refresh.domain,
+      path: securityConfig.cookies.refresh.path,
+    });
+
+    // Clear CSRF token
+    clearCsrfToken(req.user.id);
+
+    // Invalidate user cache
+    await invalidateUserCache(req.user.id);
+
+    res.json({ message: 'Logged out from all devices successfully' });
+  } catch (error: any) {
+    console.error('Logout all error:', error);
+    res.status(500).json({
+      message: 'Logout all failed',
+      code: 'LOGOUT_ALL_ERROR',
     });
   }
 });

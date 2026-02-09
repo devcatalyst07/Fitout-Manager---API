@@ -1,23 +1,41 @@
-import express from 'express';
-import { TokenPayload } from './tokens';
+import { Request } from 'express';
+
+export interface TokenPayload {
+  id: string;
+  email: string;
+  role: 'user' | 'admin';
+  name: string;
+  roleId?: string;
+  sessionId?: string;
+}
 
 /**
- * Assert that request has authenticated user
+ * Type guard to check if user is authenticated
  */
-export function assertAuthenticated(
-  req: express.Request
-): asserts req is express.Request & { user: TokenPayload } {
-  if (!req.user) {
-    throw new Error('Request is not authenticated');
-  }
-}
+export const isAuthenticated = (req: Request): req is Request & { user: TokenPayload } => {
+  return !!req.user;
+};
 
 /**
  * Get authenticated user from request
  */
-export function getAuthUser(req: express.Request): TokenPayload {
+export const getAuthUser = (req: Request): TokenPayload => {
   if (!req.user) {
-    throw new Error('Request is not authenticated');
+    throw new Error('User not authenticated');
   }
-  return req.user;
-}
+  return req.user as TokenPayload;
+};
+
+/**
+ * Type guard to check if user is admin
+ */
+export const isAdmin = (req: Request): boolean => {
+  return req.user?.role === 'admin';
+};
+
+/**
+ * Type guard to check if user is regular user
+ */
+export const isRegularUser = (req: Request): boolean => {
+  return req.user?.role === 'user';
+};

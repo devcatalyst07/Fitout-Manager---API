@@ -1,35 +1,44 @@
-import express from 'express';
-import { cache } from '../utils/redis';
+import { Request, Response, NextFunction } from 'express';
+import { getRedisClient } from '../utils/redis';
 
-export const cacheMiddleware = (ttl: number = 300) => {
-  return async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+/**
+ * Cache middleware - Cache GET requests
+ */
+export const cacheMiddleware = (ttl: number = 3600) => {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    // Only cache GET requests
     if (req.method !== 'GET') {
       return next();
     }
 
-    if (req.user) {
+    const cacheClient = getRedisClient();
+    
+    // Skip if Redis not available
+    if (!cacheClient) {
       return next();
     }
 
-    const cacheKey = `cache:${req.originalUrl}`;
-
     try {
-      const cachedData = await cache.get(cacheKey);
+      const cacheKey = `cache:${req.originalUrl}`;
+      const cachedData = await cacheClient.get(cacheKey);
 
       if (cachedData) {
-        res.setHeader('X-Cache', 'HIT');
-        return res.json(cachedData);
+        console.log(`Cache hit: ${cacheKey}`);
+        return res.json(JSON.parse(cachedData));
       }
 
-      const originalJson = res.json.bind(res);
+      // Store original send function
+      const originalSend = res.json.bind(res);
 
+      // Override send to cache the response
       res.json = function (data: any) {
-        cache.set(cacheKey, data, ttl).catch((err) => {
+        // Cache the response asynchronously
+        cacheClient.setEx(cacheKey, ttl, JSON.stringify(data)).catch((err: any) => {
           console.error('Cache set error:', err);
         });
 
-        res.setHeader('X-Cache', 'MISS');
-        return originalJson(data);
+        // Send the response
+        return originalSend(data);
       };
 
       next();
@@ -37,23 +46,5 @@ export const cacheMiddleware = (ttl: number = 300) => {
       console.error('Cache middleware error:', error);
       next();
     }
-  };
-};
-
-export const invalidateCache = async (pattern: string) => {
-  try {
-    await cache.delPattern(`cache:${pattern}`);
-  } catch (error) {
-    console.error('Cache invalidation error:', error);
-  }
-};
-
-export const browserCache = (maxAge: number = 3600) => {
-  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    if (req.method === 'GET') {
-      res.setHeader('Cache-Control', `public, max-age=${maxAge}`);
-      res.setHeader('Expires', new Date(Date.now() + maxAge * 1000).toUTCString());
-    }
-    next();
   };
 };

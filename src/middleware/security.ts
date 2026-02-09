@@ -1,40 +1,43 @@
-import express from 'express';
-import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import { securityConfig } from '../config/security';
+import { Request, Response, NextFunction } from 'express';
 
 /**
- * Apply security headers using Helmet
+ * Helmet security headers
  */
 export const securityHeaders = helmet({
   contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'"],
-      imgSrc: ["'self'", 'data:', 'https://res.cloudinary.com'],
-      connectSrc: ["'self'"],
-      fontSrc: ["'self'"],
-      objectSrc: ["'none'"],
-      mediaSrc: ["'self'"],
-      frameSrc: ["'none'"],
-    },
+    directives: securityConfig.headers.contentSecurityPolicy.directives,
   },
-  crossOriginEmbedderPolicy: false,
-  crossOriginResourcePolicy: { policy: 'cross-origin' },
   hsts: {
-    maxAge: 31536000,
-    includeSubDomains: true,
-    preload: true,
+    maxAge: securityConfig.headers.hsts.maxAge,
+    includeSubDomains: securityConfig.headers.hsts.includeSubDomains,
+    preload: securityConfig.headers.hsts.preload,
   },
   noSniff: true,
-  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
   xssFilter: true,
-  hidePoweredBy: true,
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
 });
 
 /**
- * Rate limiting middleware
+ * Custom security headers
+ */
+export const customSecurityHeaders = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  // Additional security headers
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+  next();
+};
+
+/**
+ * Global rate limiter
  */
 export const rateLimiter = rateLimit({
   windowMs: securityConfig.rateLimit.windowMs,
@@ -42,71 +45,53 @@ export const rateLimiter = rateLimit({
   message: securityConfig.rateLimit.message,
   standardHeaders: securityConfig.rateLimit.standardHeaders,
   legacyHeaders: securityConfig.rateLimit.legacyHeaders,
-  skip: (req) => {
-    // Skip rate limiting for health checks
-    return req.path === '/health';
+  handler: (req, res) => {
+    res.status(429).json({
+      message: 'Too many requests, please try again later.',
+      code: 'RATE_LIMIT_EXCEEDED',
+    });
   },
 });
 
 /**
- * Strict rate limiting for authentication endpoints
+ * Auth endpoint rate limiter (stricter)
  */
 export const authRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // 5 requests per window
+  windowMs: securityConfig.rateLimit.windowMs,
+  max: securityConfig.rateLimit.authMax,
   message: 'Too many login attempts, please try again later.',
-  skipSuccessfulRequests: true,
+  standardHeaders: securityConfig.rateLimit.standardHeaders,
+  legacyHeaders: securityConfig.rateLimit.legacyHeaders,
+  handler: (req, res) => {
+    res.status(429).json({
+      message: 'Too many login attempts, please try again later.',
+      code: 'AUTH_RATE_LIMIT_EXCEEDED',
+    });
+  },
 });
 
 /**
- * Custom security headers
+ * Request fingerprinting for session hijacking detection
  */
-export const customSecurityHeaders = (
-  req: express.Request,
-  res: express.Response,
-  next: express.NextFunction
-): void => {
-  // Prevent clickjacking
-  res.setHeader('X-Frame-Options', 'DENY');
-
-  // Prevent MIME type sniffing
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-
-  // Enable XSS protection
-  res.setHeader('X-XSS-Protection', '1; mode=block');
-
-  // Referrer policy
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-
-  // Permissions policy
-  res.setHeader(
-    'Permissions-Policy',
-    'geolocation=(), microphone=(), camera=()'
-  );
-
-  next();
-};
-
-/**
- * Request fingerprinting for session security
- */
-export const generateFingerprint = (req: express.Request): string => {
+export const requestFingerprint = (req: Request): string => {
   const userAgent = req.headers['user-agent'] || '';
   const acceptLanguage = req.headers['accept-language'] || '';
   const acceptEncoding = req.headers['accept-encoding'] || '';
-
-  return Buffer.from(`${userAgent}${acceptLanguage}${acceptEncoding}`).toString(
-    'base64'
-  );
+  
+  return Buffer.from(
+    `${userAgent}|${acceptLanguage}|${acceptEncoding}`
+  ).toString('base64');
 };
 
 /**
- * Verify request fingerprint
+ * Generate fingerprint (alias for requestFingerprint)
  */
-export const verifyFingerprint = (
-  req: express.Request,
-  storedFingerprint: string
-): boolean => {
-  const currentFingerprint = generateFingerprint(req);
+export const generateFingerprint = requestFingerprint;
+
+/**
+ * Verify fingerprint matches stored fingerprint
+ */
+export const verifyFingerprint = (req: Request, storedFingerprint: string): boolean => {
+  const currentFingerprint = requestFingerprint(req);
   return currentFingerprint === storedFingerprint;
 };

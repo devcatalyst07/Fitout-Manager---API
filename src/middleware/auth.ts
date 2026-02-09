@@ -1,87 +1,128 @@
-import express from 'express';
-import { verifyAccessToken, TokenPayload } from '../utils/tokens';
+import { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
 import { securityConfig } from '../config/security';
-import { sessionStore } from '../utils/redis';
-import { verifyFingerprint } from './security';
+import User from '../models/User';
+import { getCachedUser, cacheUser } from '../utils/cache';
 
+// Extend Express Request type
+declare global {
+  namespace Express {
+    interface Request {
+      user?: {
+        id: string;
+        email: string;
+        role: 'user' | 'admin';
+        name: string;
+        roleId?: string;
+        sessionId?: string;
+      };
+    }
+  }
+}
+
+/**
+ * Authentication middleware - Verify JWT token
+ */
 export const authMiddleware = async (
-  req: express.Request,
-  res: express.Response,
-  next: express.NextFunction
-): Promise<void> => {
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
   try {
-    const accessToken = req.cookies[securityConfig.cookie.sessionName];
+    // Get token from cookie
+    const token = req.cookies[securityConfig.cookies.session.name];
 
-    if (!accessToken) {
-      res.status(401).json({
+    if (!token) {
+      return res.status(401).json({
         message: 'Authentication required',
         code: 'AUTH_TOKEN_MISSING',
       });
-      return;
     }
 
-    let decoded: TokenPayload;
+    // Verify token
+    let decoded: any;
     try {
-      decoded = verifyAccessToken(accessToken);
-    } catch (error) {
-      res.status(401).json({
-        message: 'Session expired',
-        code: 'AUTH_TOKEN_EXPIRED',
+      decoded = jwt.verify(token, securityConfig.jwt.accessSecret);
+    } catch (error: any) {
+      if (error.name === 'TokenExpiredError') {
+        return res.status(401).json({
+          message: 'Token expired',
+          code: 'AUTH_TOKEN_EXPIRED',
+        });
+      }
+      return res.status(401).json({
+        message: 'Invalid token',
+        code: 'AUTH_TOKEN_INVALID',
       });
-      return;
     }
 
-    const sessionData = await sessionStore.get(decoded.sessionId);
-    if (sessionData) {
-      if (!verifyFingerprint(req, sessionData.fingerprint)) {
-        await sessionStore.delete(decoded.sessionId);
-        res.status(401).json({
-          message: 'Session invalid',
-          code: 'SESSION_HIJACK_DETECTED',
+    // Check cache first
+    let user = await getCachedUser(decoded.id);
+
+    // If not in cache, get from database
+    if (!user) {
+      const dbUser = await User.findById(decoded.id).select('-password');
+      if (!dbUser) {
+        return res.status(401).json({
+          message: 'User not found',
+          code: 'USER_NOT_FOUND',
         });
-        return;
       }
 
-      const currentVersion = await sessionStore.getTokenVersion(decoded.id);
-      if (currentVersion !== null && sessionData.tokenVersion !== currentVersion) {
-        await sessionStore.delete(decoded.sessionId);
-        res.status(401).json({
-          message: 'Session revoked',
-          code: 'SESSION_REVOKED',
-        });
-        return;
-      }
+      user = {
+        id: dbUser._id.toString(),
+        email: dbUser.email,
+        role: dbUser.role,
+        name: dbUser.name,
+        roleId: dbUser.roleId?.toString(),
+      };
+
+      // Cache the user for next time
+      await cacheUser(user.id, user);
     }
 
-    req.user = decoded;
+    // Attach user to request
+    req.user = {
+      id: user.id,
+      email: user.email,
+      role: user.role as 'user' | 'admin',
+      name: user.name,
+      roleId: user.roleId,
+      sessionId: decoded.sessionId,
+    };
+
     next();
-  } catch (error) {
+  } catch (error: any) {
     console.error('Auth middleware error:', error);
     res.status(500).json({
-      message: 'Authentication error',
+      message: 'Authentication failed',
       code: 'AUTH_ERROR',
     });
   }
 };
 
-export const optionalAuth = async (
-  req: express.Request,
-  res: express.Response,
-  next: express.NextFunction
-): Promise<void> => {
-  const accessToken = req.cookies[securityConfig.cookie.sessionName];
-
-  if (!accessToken) {
-    next();
-    return;
+/**
+ * Admin-only middleware
+ */
+export const adminOnly = (req: Request, res: Response, next: NextFunction) => {
+  if (!req.user || req.user.role !== 'admin') {
+    return res.status(403).json({
+      message: 'Admin access required',
+      code: 'FORBIDDEN',
+    });
   }
+  next();
+};
 
-  try {
-    const decoded = verifyAccessToken(accessToken);
-    req.user = decoded;
-  } catch (error) {
-    console.log('Optional auth failed:', error);
+/**
+ * User-only middleware
+ */
+export const userOnly = (req: Request, res: Response, next: NextFunction) => {
+  if (!req.user || req.user.role !== 'user') {
+    return res.status(403).json({
+      message: 'User access required',
+      code: 'FORBIDDEN',
+    });
   }
-
   next();
 };
