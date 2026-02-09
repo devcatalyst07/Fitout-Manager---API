@@ -1,4 +1,7 @@
-const getAllowedOrigins = (): string[] => {
+/**
+ * Get allowed CORS origins with proper fallbacks
+ */
+export const getAllowedOrigins = (): string[] => {
   const origins = [
     process.env.FRONTEND_URL,
     process.env.PROD_FRONTEND_URL,
@@ -83,7 +86,7 @@ export const securityConfig = {
       if (allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
-        console.error('❌ CORS blocked origin:', origin);
+        console.error('CORS blocked origin:', origin);
         callback(new Error('Not allowed by CORS'));
       }
     },
@@ -179,7 +182,7 @@ export const securityConfig = {
 };
 
 // Log configuration on startup (only non-sensitive info)
-console.log('🔒 Security Configuration Loaded:');
+console.log('Security Configuration Loaded:');
 console.log('   - Environment:', process.env.NODE_ENV || 'development');
 console.log('   - CSRF Enabled:', securityConfig.csrf.enabled);
 console.log('   - Secure Cookies:', isSecure());

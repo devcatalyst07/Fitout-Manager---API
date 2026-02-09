@@ -5,7 +5,7 @@ import { Request, Response } from 'express';
 import app from './app';
 import { connectDB } from './config/database';
 import { createAdmin } from './seed/createAdmin';
-import { securityConfig } from './config/security';
+import { getAllowedOrigins } from './config/security';
 
 let isConnected = false;
 
@@ -13,7 +13,7 @@ const handler = async (req: Request, res: Response) => {
   try {
     // Set CORS headers BEFORE any other processing
     const origin = req.headers.origin;
-    const allowedOrigins = securityConfig.cors.origin;
+    const allowedOrigins = getAllowedOrigins();
     
     console.log('📍 Request origin:', origin);
     console.log('✅ Allowed origins:', allowedOrigins);
@@ -30,24 +30,24 @@ const handler = async (req: Request, res: Response) => {
 
     // Handle preflight requests
     if (req.method === 'OPTIONS') {
-      console.log('Handling preflight request');
+      console.log('✈️ Handling preflight request');
       res.status(204).end();
       return;
     }
 
     // Connect to database
     if (!isConnected) {
-      console.log('Connecting to database...');
+      console.log('🔌 Connecting to database...');
       await connectDB();
       await createAdmin();
       isConnected = true;
-      console.log('Database connected');
+      console.log('✅ Database connected');
     }
 
     // Pass to Express app
     return app(req, res);
   } catch (error) {
-    console.error('Vercel handler error:', error);
+    console.error('❌ Vercel handler error:', error);
     res.status(500).json({ 
       message: 'Server error',
       error: process.env.NODE_ENV === 'development' ? String(error) : undefined
