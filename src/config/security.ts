@@ -1,10 +1,59 @@
+/**
+ * Get allowed CORS origins with proper fallbacks
+ */
+const getAllowedOrigins = (): string[] => {
+  const origins = [
+    process.env.FRONTEND_URL,
+    process.env.PROD_FRONTEND_URL,
+    process.env.CORS_ORIGIN,
+  ].filter((origin): origin is string => Boolean(origin)); // Remove undefined values
+
+  // Always include production URL as fallback
+  const productionUrl = 'https://fitout-manager-mockup.vercel.app';
+  if (!origins.includes(productionUrl)) {
+    origins.push(productionUrl);
+  }
+
+  // Add localhost for development
+  if (process.env.NODE_ENV !== 'production') {
+    origins.push('http://localhost:3000', 'http://127.0.0.1:3000');
+  }
+
+  // Log origins for debugging
+  console.log('🌐 Allowed CORS origins:', origins);
+  
+  return origins;
+};
+
+/**
+ * Determine if we should use secure cookies
+ */
+const isSecure = (): boolean => {
+  return process.env.NODE_ENV === 'production' || 
+         process.env.COOKIE_SECURE === 'true';
+};
+
+/**
+ * Determine SameSite cookie setting
+ */
+const getSameSite = (): 'strict' | 'lax' | 'none' => {
+  // Use environment variable if set
+  if (process.env.COOKIE_SAME_SITE) {
+    return process.env.COOKIE_SAME_SITE as 'strict' | 'lax' | 'none';
+  }
+  
+  // In production with different domains, use 'none'
+  // In development, use 'lax'
+  return process.env.NODE_ENV === 'production' ? 'none' : 'lax';
+};
+
 export const securityConfig = {
   /**
    * JWT Configuration
    */
   jwt: {
-    accessSecret: process.env.JWT_ACCESS_SECRET!,
-    refreshSecret: process.env.JWT_REFRESH_SECRET!,
+    accessSecret: process.env.JWT_ACCESS_SECRET || 'dev-access-secret-CHANGE-IN-PRODUCTION',
+    refreshSecret: process.env.JWT_REFRESH_SECRET || 'dev-refresh-secret-CHANGE-IN-PRODUCTION',
     accessExpiry: process.env.ACCESS_TOKEN_EXPIRY || '15m',
     refreshExpiry: process.env.REFRESH_TOKEN_EXPIRY || '7d',
   },
@@ -13,12 +62,7 @@ export const securityConfig = {
    * CORS Configuration
    */
   cors: {
-    origin: [
-      process.env.FRONTEND_URL || 'http://localhost:3000',
-      process.env.PROD_FRONTEND_URL || 'https://fitout-manager-mockup.vercel.app',
-      process.env.CORS_ORIGIN || 'http://localhost:3000',
-      'http://127.0.0.1:3000',
-    ],
+    origin: getAllowedOrigins(),
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: [
@@ -28,7 +72,9 @@ export const securityConfig = {
       'Cookie',
     ],
     exposedHeaders: ['X-CSRF-Token', 'Set-Cookie'],
-    maxAge: 86400,
+    maxAge: 86400, // 24 hours
+    preflightContinue: false,
+    optionsSuccessStatus: 204,
   },
 
   /**
@@ -38,17 +84,17 @@ export const securityConfig = {
     session: {
       name: process.env.SESSION_COOKIE_NAME || 'fitout_session',
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: (process.env.COOKIE_SAME_SITE as 'strict' | 'lax' | 'none') || 'lax',
-      maxAge: 15 * 60 * 1000,
+      secure: isSecure(),
+      sameSite: getSameSite(),
+      maxAge: 15 * 60 * 1000, // 15 minutes
       domain: process.env.COOKIE_DOMAIN || undefined,
     },
     refresh: {
       name: process.env.REFRESH_COOKIE_NAME || 'fitout_refresh',
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: (process.env.COOKIE_SAME_SITE as 'strict' | 'lax' | 'none') || 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      secure: isSecure(),
+      sameSite: getSameSite(),
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
       domain: process.env.COOKIE_DOMAIN || undefined,
       path: '/api/auth',
     },
@@ -58,7 +104,7 @@ export const securityConfig = {
    * CSRF Configuration
    */
   csrf: {
-    secret: process.env.CSRF_SECRET!,
+    secret: process.env.CSRF_SECRET || 'dev-csrf-secret-CHANGE-IN-PRODUCTION',
     enabled: process.env.CSRF_ENABLED === 'true',
   },
 
@@ -66,9 +112,9 @@ export const securityConfig = {
    * Rate Limiting Configuration
    */
   rateLimit: {
-    windowMs: 15 * 60 * 1000,
-    max: 100,
-    authMax: 5,
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // Max 100 requests per windowMs
+    authMax: 5, // Max 5 auth attempts per windowMs
     message: 'Too many requests from this IP, please try again later.',
     standardHeaders: true,
     legacyHeaders: false,
@@ -78,9 +124,9 @@ export const securityConfig = {
    * Session Configuration
    */
   session: {
-    maxAge: 15 * 60 * 1000,
-    refreshThreshold: 5 * 60 * 1000,
-    absoluteTimeout: 24 * 60 * 60 * 1000,
+    maxAge: 15 * 60 * 1000, // 15 minutes
+    refreshThreshold: 5 * 60 * 1000, // 5 minutes
+    absoluteTimeout: 24 * 60 * 60 * 1000, // 24 hours
   },
 
   /**
@@ -101,9 +147,17 @@ export const securityConfig = {
       },
     },
     hsts: {
-      maxAge: 31536000,
+      maxAge: 31536000, // 1 year
       includeSubDomains: true,
       preload: true,
     },
   },
 };
+
+// Log configuration on startup (only non-sensitive info)
+console.log('🔒 Security Configuration Loaded:');
+console.log('   - Environment:', process.env.NODE_ENV || 'development');
+console.log('   - CSRF Enabled:', securityConfig.csrf.enabled);
+console.log('   - Secure Cookies:', isSecure());
+console.log('   - SameSite:', getSameSite());
+console.log('   - Cookie Domain:', process.env.COOKIE_DOMAIN || 'none (browser default)');
