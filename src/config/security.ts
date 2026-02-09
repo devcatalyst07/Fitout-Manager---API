@@ -20,7 +20,7 @@ export const getAllowedOrigins = (): string[] => {
   }
 
   // Log origins for debugging
-  console.log('🌐 Allowed CORS origins:', origins);
+  console.log('Allowed CORS origins:', origins);
   
   return origins;
 };
@@ -72,24 +72,11 @@ export const securityConfig = {
   },
 
   /**
-   * CORS Configuration
+   * CORS Configuration - SIMPLE ARRAY VERSION
+   * This is easier to work with than the function version
    */
   cors: {
-    origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-      const allowedOrigins = getAllowedOrigins();
-      
-      // Allow requests with no origin (like mobile apps, Postman, or server-to-server)
-      if (!origin) {
-        return callback(null, true);
-      }
-
-      if (allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        console.error('CORS blocked origin:', origin);
-        callback(new Error('Not allowed by CORS'));
-      }
-    },
+    origin: getAllowedOrigins(), // Array of allowed origins
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: [

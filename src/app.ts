@@ -1,5 +1,4 @@
 import express from 'express';
-import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import path from 'path';
 import { securityConfig } from './config/security';
@@ -50,8 +49,9 @@ app.set('trust proxy', 1);
 app.use(securityHeaders);
 app.use(customSecurityHeaders);
 
-// CORS configuration
-app.use(cors(securityConfig.cors));
+// ⚠️ IMPORTANT: DO NOT use cors() middleware here!
+// CORS is handled in server.ts (Vercel handler) to avoid conflicts
+// If you add cors() here, it will override server.ts headers and cause issues
 
 // Body parsers
 app.use(express.json({ limit: '10mb' }));
@@ -66,6 +66,7 @@ app.use(rateLimiter);
 // Logging middleware
 app.use((req, res, next) => {
   console.log(`📍 ${req.method} ${req.path}`);
+  console.log(`   Origin: ${req.headers.origin || 'none'}`);
   next();
 });
 
@@ -78,6 +79,7 @@ app.get('/health', (_, res) => {
     status: 'healthy',
     timestamp: new Date().toISOString(),
     env: process.env.NODE_ENV || 'development',
+    cors_handled_by: 'server.ts',
   });
 });
 
@@ -89,6 +91,7 @@ app.get('/', (_, res) => {
     version: '2.0.0',
     security: 'enhanced',
     csrf_enabled: securityConfig.csrf.enabled,
+    cors_handled_by: 'server.ts (Vercel handler)',
   });
 });
 
