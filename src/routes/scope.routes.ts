@@ -1,4 +1,6 @@
 import express from 'express';
+import multer from 'multer';
+import * as XLSX from 'xlsx';
 import { authMiddleware } from '../middleware/auth';
 import { requireAdmin as adminOnly } from '../middleware/permissions';
 import Scope from '../models/Scope';
@@ -8,6 +10,25 @@ import Task from '../models/Task';
 import Brand from '../models/Brand';
 
 const router = express.Router();
+
+// Configure multer for file uploads
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedMimes = [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel',
+    ];
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only Excel files (.xlsx, .xls) are allowed'));
+    }
+  },
+});
 
 // ==================== SCOPE ROUTES ====================
 
@@ -678,6 +699,323 @@ router.delete('/:scopeId/workflows/:workflowId/phases/:phaseId/tasks/:taskId', a
     res.status(500).json({ message: 'Failed to delete task' });
   }
 });
+
+// ==================== BULK UPLOAD TASKS ====================
+
+// Download Excel template
+router.get(
+  '/:scopeId/workflows/:workflowId/templates/task-upload-template.xlsx',
+  authMiddleware,
+  adminOnly,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { scopeId, workflowId } = req.params;
+
+      // Verify workflow exists
+      const workflow = await Workflow.findOne({ _id: workflowId, scopeId });
+      if (!workflow) {
+        return res.status(404).json({ message: 'Workflow not found' });
+      }
+
+      // Create sample template data
+      const templateData = [
+        {
+          'Task ID': 'T001',
+          'Phase Name': 'Planning',
+          'Task Title': 'Initial Site Survey',
+          'Task Description': 'Conduct comprehensive site survey and document existing conditions',
+          'Task Type': 'Task',
+          'Priority': 'High',
+          'Predecessor IDs': '',
+          'Dependency Type': '',
+          'Lag (Days)': '0',
+          'Duration (Days)': '3',
+        },
+        {
+          'Task ID': 'T002',
+          'Phase Name': 'Planning',
+          'Task Title': 'Design Review Meeting',
+          'Task Description': 'Review design plans with stakeholders',
+          'Task Type': 'Milestone',
+          'Priority': 'Critical',
+          'Predecessor IDs': 'T001',
+          'Dependency Type': 'FS',
+          'Lag (Days)': '0',
+          'Duration (Days)': '1',
+        },
+        {
+          'Task ID': 'T003',
+          'Phase Name': 'Execution',
+          'Task Title': 'Material Procurement',
+          'Task Description': 'Order and receive construction materials',
+          'Task Type': 'Task',
+          'Priority': 'High',
+          'Predecessor IDs': 'T002',
+          'Dependency Type': 'FS',
+          'Lag (Days)': '2',
+          'Duration (Days)': '5',
+        },
+        {
+          'Task ID': 'T004',
+          'Phase Name': 'Execution',
+          'Task Title': 'Construction Phase 1',
+          'Task Description': 'Complete first phase of construction work',
+          'Task Type': 'Task',
+          'Priority': 'Medium',
+          'Predecessor IDs': 'T003',
+          'Dependency Type': 'FS',
+          'Lag (Days)': '0',
+          'Duration (Days)': '10',
+        },
+        {
+          'Task ID': 'T005',
+          'Phase Name': 'Execution',
+          'Task Title': 'Final Deliverable',
+          'Task Description': 'Prepare and submit final deliverable package',
+          'Task Type': 'Deliverable',
+          'Priority': 'Critical',
+          'Predecessor IDs': 'T004',
+          'Dependency Type': 'FS',
+          'Lag (Days)': '1',
+          'Duration (Days)': '2',
+        },
+      ];
+
+      const worksheet = XLSX.utils.json_to_sheet(templateData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Tasks');
+
+      // Set column widths for better readability
+      worksheet['!cols'] = [
+        { wch: 10 },  // Task ID
+        { wch: 20 },  // Phase Name
+        { wch: 30 },  // Task Title
+        { wch: 50 },  // Task Description
+        { wch: 15 },  // Task Type
+        { wch: 12 },  // Priority
+        { wch: 20 },  // Predecessor IDs
+        { wch: 18 },  // Dependency Type
+        { wch: 12 },  // Lag (Days)
+        { wch: 15 },  // Duration (Days)
+      ];
+
+      const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      );
+      res.setHeader(
+        'Content-Disposition',
+        'attachment; filename=task-upload-template.xlsx'
+      );
+      res.send(buffer);
+    } catch (error: any) {
+      console.error('Template download error:', error);
+      res.status(500).json({ message: 'Failed to generate template' });
+    }
+  }
+);
+
+// Bulk upload tasks from Excel
+router.post(
+  '/:scopeId/workflows/:workflowId/tasks/bulk-upload',
+  authMiddleware,
+  adminOnly,
+  upload.single('file'),
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { scopeId, workflowId } = req.params;
+
+      // Verify workflow exists
+      const workflow = await Workflow.findOne({ _id: workflowId, scopeId });
+      if (!workflow) {
+        return res.status(404).json({ message: 'Workflow not found' });
+      }
+
+      // Get uploaded file from multer
+      const file = req.file;
+      if (!file) {
+        return res.status(400).json({ message: 'No file uploaded' });
+      }
+
+      // Parse Excel file
+      const workbook = XLSX.read(file.buffer);
+      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(worksheet, { defval: '' }) as any[];
+
+      if (rows.length === 0) {
+        return res.status(400).json({ message: 'Excel file is empty' });
+      }
+
+      // Validate required columns
+      const requiredColumns = [
+        'Task ID',
+        'Phase Name',
+        'Task Title',
+        'Task Type',
+        'Duration (Days)',
+      ];
+
+      const firstRow: any = rows[0];
+      const actualColumns = Object.keys(firstRow);
+
+      const missingColumns = requiredColumns.filter(
+        (col) => !actualColumns.includes(col)
+      );
+
+      if (missingColumns.length > 0) {
+        return res.status(400).json({
+          message: `Missing required columns: ${missingColumns.join(', ')}`,
+        });
+      }
+
+      // Group tasks by phase
+      const phaseMap = new Map<string, any[]>();
+      rows.forEach((row: any) => {
+        const phaseName = row['Phase Name'];
+        if (!phaseMap.has(phaseName)) {
+          phaseMap.set(phaseName, []);
+        }
+        phaseMap.get(phaseName)!.push(row);
+      });
+
+      let phasesCreated = 0;
+      let tasksCreated = 0;
+      const taskIdMap = new Map<string, string>(); // Excel Task ID -> MongoDB _id
+
+      // First pass: Create phases and tasks (without dependencies)
+      for (const [phaseName, phaseTasks] of phaseMap.entries()) {
+        // Find or create phase
+        let phase = await Phase.findOne({
+          workflowId,
+          scopeId,
+          name: phaseName,
+          isTemplate: true,
+        });
+
+        if (!phase) {
+          const maxPhase = await Phase.findOne({
+            workflowId,
+            scopeId,
+            isTemplate: true,
+          }).sort({ order: -1 });
+
+          phase = await Phase.create({
+            name: phaseName,
+            workflowId,
+            scopeId,
+            order: maxPhase ? maxPhase.order + 1 : 0,
+            isTemplate: true,
+            createdBy: req.user!.id,
+          });
+          phasesCreated++;
+        }
+
+        // Create tasks for this phase
+        for (const taskRow of phaseTasks) {
+          const duration = parseFloat(taskRow['Duration (Days)']) || 1;
+          const taskType = taskRow['Task Type'] || 'Task';
+
+          // Validate milestone duration
+          if (taskType === 'Milestone' && duration > 1) {
+            return res.status(400).json({
+              message: `Task "${taskRow['Task Title']}" is a Milestone but has duration > 1 day`,
+            });
+          }
+
+          const newTask = await Task.create({
+            title: taskRow['Task Title'],
+            description: taskRow['Task Description'] || '',
+            priority: taskRow['Priority'] || 'Medium',
+            taskType: taskType,
+            duration: duration,
+            dependencies: [], // Will be populated in second pass
+            phaseId: phase._id,
+            workflowId,
+            scopeId,
+            isTemplate: true,
+            assignees: [],
+            order: tasksCreated,
+            createdBy: req.user!.id,
+          });
+
+          // Map Excel Task ID to MongoDB _id
+          taskIdMap.set(taskRow['Task ID'], newTask._id.toString());
+          tasksCreated++;
+        }
+      }
+
+      // Second pass: Add dependencies
+      for (const row of rows) {
+        const mongoTaskId = taskIdMap.get(row['Task ID']);
+        if (!mongoTaskId) continue;
+
+        const predecessorIds = row['Predecessor IDs']
+          ? row['Predecessor IDs']
+              .split(';')
+              .map((id: string) => id.trim())
+              .filter(Boolean)
+          : [];
+
+        const dependencyTypes = row['Dependency Type']
+          ? row['Dependency Type']
+              .split(';')
+              .map((t: string) => t.trim())
+              .filter(Boolean)
+          : [];
+
+        if (predecessorIds.length > 0) {
+          const dependencies = predecessorIds
+            .map((predId: string, index: number) => {
+              const mongoPredId = taskIdMap.get(predId);
+              if (!mongoPredId) {
+                console.warn(
+                  `Warning: Predecessor ID "${predId}" not found for task "${row['Task Title']}"`
+                );
+                return null;
+              }
+
+              const depType = dependencyTypes[index] || 'FS';
+              if (!['FS', 'SS'].includes(depType)) {
+                console.warn(
+                  `Warning: Invalid dependency type "${depType}" for task "${row['Task Title']}", defaulting to FS`
+                );
+                return {
+                  taskId: mongoPredId,
+                  type: 'FS' as const,
+                };
+              }
+
+              return {
+                taskId: mongoPredId,
+                type: depType as 'FS' | 'SS',
+              };
+            })
+            .filter(Boolean);
+
+          if (dependencies.length > 0) {
+            await Task.findByIdAndUpdate(mongoTaskId, {
+              $set: { dependencies },
+            });
+          }
+        }
+      }
+
+      res.json({
+        success: true,
+        phasesCreated,
+        tasksCreated,
+        message: `Successfully uploaded ${tasksCreated} tasks across ${phasesCreated} new phases`,
+      });
+    } catch (error: any) {
+      console.error('Bulk upload error:', error);
+      res.status(500).json({
+        message: error.message || 'Failed to upload tasks',
+      });
+    }
+  }
+);
 
 // ==================== BULK IMPORT/EXPORT ====================
 

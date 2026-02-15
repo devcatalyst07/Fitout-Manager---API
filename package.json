@@ -6,7 +6,8 @@
     "node": "22.x"
   },
   "scripts": {
-    "dev": "ts-node src/server.ts",
+    "dev": "ts-node src/server.local.ts",
+    "dev:serverless": "ts-node src/server.ts",
     "build": "tsc",
     "postinstall": "npm run build",
     "start": "node dist/server.js",

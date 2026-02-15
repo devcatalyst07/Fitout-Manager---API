@@ -1,4 +1,5 @@
 import express from 'express';
+import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import path from 'path';
 import { securityConfig } from './config/security';
@@ -45,13 +46,38 @@ initRedis().catch((err) => {
 // Trust proxy (required for Vercel and other reverse proxies)
 app.set('trust proxy', 1);
 
+// CORS Configuration - MUST BE FIRST, BEFORE OTHER MIDDLEWARE
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  process.env.PROD_FRONTEND_URL,
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'https://fitout-manager-mockup.vercel.app',
+].filter(Boolean);
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps, Postman, curl)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.includes(origin)) {
+      console.log('CORS allowed origin:', origin);
+      callback(null, true);
+    } else {
+      console.log('CORS blocked origin:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'Cookie'],
+  exposedHeaders: ['X-CSRF-Token', 'Set-Cookie'],
+  maxAge: 86400,
+}));
+
 // Security headers
 app.use(securityHeaders);
 app.use(customSecurityHeaders);
-
-// 🚫 DO NOT ADD CORS HERE - IT'S HANDLED IN server.ts
-// The line below was causing the wildcard issue:
-// app.use(cors(securityConfig.cors)); // ← REMOVED
 
 // Body parsers
 app.use(express.json({ limit: '10mb' }));

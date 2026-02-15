@@ -1,3 +1,6 @@
+// routes/auth.routes.ts - COMPLETE UPDATED VERSION
+// Replace your entire auth.routes.ts with this
+
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
@@ -54,6 +57,7 @@ router.post(
         password: hashedPassword,
         role: 'user',
         subscriptionType: subscriptionType || 'Starter',
+        tokenVersion: 0, // Initialize token version
       });
 
       // Generate session ID
@@ -99,6 +103,8 @@ router.post(
         role: user.role,
         name: user.name,
       });
+
+      console.log('User registered:', user.email);
 
       res.status(201).json({
         message: 'User registered successfully',
@@ -202,6 +208,8 @@ router.post(
         roleId: user.roleId?.toString(),
       });
 
+      console.log('User logged in:', user.email);
+
       res.json({
         message: 'Login successful',
         user: {
@@ -224,11 +232,12 @@ router.post(
 
 /**
  * Refresh - Get new access token using refresh token
+ * CORRECTED: Now reuses existing session ID
  */
 router.post('/refresh', async (req: express.Request, res: express.Response) => {
   try {
     const refreshToken = req.cookies[securityConfig.cookies.refresh.name];
-
+    
     if (!refreshToken) {
       return res.status(401).json({
         message: 'Refresh token missing',
@@ -241,6 +250,15 @@ router.post('/refresh', async (req: express.Request, res: express.Response) => {
     try {
       payload = verifyRefreshToken(refreshToken);
     } catch (error) {
+      // Clear invalid refresh token cookie
+      res.clearCookie(securityConfig.cookies.refresh.name, {
+        httpOnly: true,
+        secure: securityConfig.cookies.refresh.secure,
+        sameSite: securityConfig.cookies.refresh.sameSite,
+        domain: securityConfig.cookies.refresh.domain,
+        path: securityConfig.cookies.refresh.path,
+      });
+      
       return res.status(401).json({
         message: 'Invalid refresh token',
         code: 'INVALID_REFRESH_TOKEN',
@@ -248,33 +266,47 @@ router.post('/refresh', async (req: express.Request, res: express.Response) => {
     }
 
     // Get user
-    const user = await User.findById(payload.id);
+    const user = await User.findById(payload.id).select('-password');
+    
     if (!user) {
+      // Clear cookies for non-existent user
+      res.clearCookie(securityConfig.cookies.session.name);
+      res.clearCookie(securityConfig.cookies.refresh.name, {
+        path: '/api/auth',
+      });
+      
       return res.status(401).json({
         message: 'User not found',
         code: 'USER_NOT_FOUND',
       });
     }
 
-    // Check token version
-    if (user.tokenVersion !== payload.tokenVersion) {
+    // Check token version (for logout-all functionality)
+    if (user.tokenVersion !== undefined && payload.tokenVersion !== user.tokenVersion) {
+      // Token version mismatch - all sessions have been revoked
+      res.clearCookie(securityConfig.cookies.session.name);
+      res.clearCookie(securityConfig.cookies.refresh.name, {
+        path: '/api/auth',
+      });
+      
       return res.status(401).json({
         message: 'Token has been revoked',
         code: 'TOKEN_REVOKED',
       });
     }
 
-    // Generate new session ID
-    const newSessionId = generateSessionId();
+    // FIXED: Reuse existing session ID from refresh token
+    // This maintains session continuity across token refreshes
+    const existingSessionId = payload.sessionId;
 
-    // Generate new access token
+    // Generate new access token with SAME session ID
     const newAccessToken = generateAccessToken({
       id: user._id.toString(),
       email: user.email,
       role: user.role,
       name: user.name,
       roleId: user.roleId?.toString(),
-      sessionId: newSessionId,
+      sessionId: existingSessionId, // Reuse existing session ID
     });
 
     // Set new access token cookie
@@ -286,7 +318,27 @@ router.post('/refresh', async (req: express.Request, res: express.Response) => {
       domain: securityConfig.cookies.session.domain,
     });
 
-    res.json({ message: 'Token refreshed successfully' });
+    // Update user cache with fresh data
+    await cacheUser(user._id.toString(), {
+      id: user._id.toString(),
+      email: user.email,
+      role: user.role,
+      name: user.name,
+      roleId: user.roleId?.toString(),
+    });
+
+    console.log('Access token refreshed for user:', user.email);
+
+    res.json({
+      message: 'Token refreshed successfully',
+      user: {
+        id: user._id.toString(),
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        roleId: user.roleId?.toString(),
+      },
+    });
   } catch (error: any) {
     console.error('Refresh error:', error);
     res.status(500).json({
@@ -309,6 +361,7 @@ router.get('/me', authMiddleware, async (req: express.Request, res: express.Resp
     }
 
     const user = await User.findById(req.user.id).select('-password');
+    
     if (!user) {
       return res.status(404).json({
         message: 'User not found',
@@ -366,6 +419,8 @@ router.post('/logout', authMiddleware, async (req: express.Request, res: express
       await invalidateUserCache(req.user.id);
     }
 
+    console.log('User logged out:', req.user?.email);
+
     res.json({ message: 'Logged out successfully' });
   } catch (error: any) {
     console.error('Logout error:', error);
@@ -415,6 +470,8 @@ router.post('/logout-all', authMiddleware, async (req: express.Request, res: exp
 
     // Invalidate user cache
     await invalidateUserCache(req.user.id);
+
+    console.log('User logged out from all devices:', req.user.email);
 
     res.json({ message: 'Logged out from all devices successfully' });
   } catch (error: any) {
