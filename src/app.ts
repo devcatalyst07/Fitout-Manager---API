@@ -35,6 +35,7 @@ import brandRoutes from './routes/brand.routes';
 import roleRoutes from './routes/role.routes';
 import scopeRoutes from './routes/scope.routes';
 import profileRoutes from './routes/profile.routes';
+import tenderRoutes from './routes/tender.routes';
 
 const app = express();
 
@@ -147,6 +148,7 @@ app.use('/api/tasks', activityLogRoutes);
 app.use('/api', uploadRoutes);
 app.use('/api', calendarRoutes);
 app.use('/api/profile', profileRoutes);
+app.use('/api', tenderRoutes);
 
 // 404 Handler
 app.use((req, res) => {
