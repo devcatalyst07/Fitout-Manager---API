@@ -1,8 +1,8 @@
-import { Request, Response, NextFunction } from 'express';
-import jwt from 'jsonwebtoken';
-import { securityConfig } from '../config/security';
-import User from '../models/User';
-import { getCachedUser, cacheUser } from '../utils/cache';
+import { Request, Response, NextFunction } from "express";
+import jwt from "jsonwebtoken";
+import { securityConfig } from "../config/security";
+import User from "../models/User";
+import { getCachedUser, cacheUser } from "../utils/cache";
 
 // Extend Express Request type
 declare global {
@@ -11,7 +11,7 @@ declare global {
       user?: {
         id: string;
         email: string;
-        role: 'user' | 'admin';
+        role: "user" | "admin";
         name: string;
         roleId?: string;
         sessionId?: string;
@@ -26,7 +26,7 @@ declare global {
 export const authMiddleware = async (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) => {
   try {
     // Get token from cookie
@@ -34,10 +34,10 @@ export const authMiddleware = async (
 
     if (!token) {
       const cookieNames = Object.keys(req.cookies || {});
-      console.log('Auth token missing. Cookies received:', cookieNames);
+      console.log("Auth token missing. Cookies received:", cookieNames);
       return res.status(401).json({
-        message: 'Authentication required',
-        code: 'AUTH_TOKEN_MISSING',
+        message: "Authentication required",
+        code: "AUTH_TOKEN_MISSING",
       });
     }
 
@@ -46,16 +46,16 @@ export const authMiddleware = async (
     try {
       decoded = jwt.verify(token, securityConfig.jwt.accessSecret);
     } catch (error: any) {
-      console.log('Auth token verify failed:', error?.name || 'UnknownError');
-      if (error.name === 'TokenExpiredError') {
+      console.log("Auth token verify failed:", error?.name || "UnknownError");
+      if (error.name === "TokenExpiredError") {
         return res.status(401).json({
-          message: 'Token expired',
-          code: 'AUTH_TOKEN_EXPIRED',
+          message: "Token expired",
+          code: "AUTH_TOKEN_EXPIRED",
         });
       }
       return res.status(401).json({
-        message: 'Invalid token',
-        code: 'AUTH_TOKEN_INVALID',
+        message: "Invalid token",
+        code: "AUTH_TOKEN_INVALID",
       });
     }
 
@@ -64,11 +64,11 @@ export const authMiddleware = async (
 
     // If not in cache, get from database
     if (!user) {
-      const dbUser = await User.findById(decoded.id).select('-password');
+      const dbUser = await User.findById(decoded.id).select("-password");
       if (!dbUser) {
         return res.status(401).json({
-          message: 'User not found',
-          code: 'USER_NOT_FOUND',
+          message: "User not found",
+          code: "USER_NOT_FOUND",
         });
       }
 
@@ -88,7 +88,7 @@ export const authMiddleware = async (
     req.user = {
       id: user.id,
       email: user.email,
-      role: user.role as 'user' | 'admin',
+      role: user.role as "user" | "admin",
       name: user.name,
       roleId: user.roleId,
       sessionId: decoded.sessionId,
@@ -96,10 +96,10 @@ export const authMiddleware = async (
 
     next();
   } catch (error: any) {
-    console.error('Auth middleware error:', error);
+    console.error("Auth middleware error:", error);
     res.status(500).json({
-      message: 'Authentication failed',
-      code: 'AUTH_ERROR',
+      message: "Authentication failed",
+      code: "AUTH_ERROR",
     });
   }
 };
@@ -108,10 +108,10 @@ export const authMiddleware = async (
  * Admin-only middleware
  */
 export const adminOnly = (req: Request, res: Response, next: NextFunction) => {
-  if (!req.user || req.user.role !== 'admin') {
+  if (!req.user || req.user.role !== "admin") {
     return res.status(403).json({
-      message: 'Admin access required',
-      code: 'FORBIDDEN',
+      message: "Admin access required",
+      code: "FORBIDDEN",
     });
   }
   next();
@@ -121,10 +121,10 @@ export const adminOnly = (req: Request, res: Response, next: NextFunction) => {
  * User-only middleware
  */
 export const userOnly = (req: Request, res: Response, next: NextFunction) => {
-  if (!req.user || req.user.role !== 'user') {
+  if (!req.user || req.user.role !== "user") {
     return res.status(403).json({
-      message: 'User access required',
-      code: 'FORBIDDEN',
+      message: "User access required",
+      code: "FORBIDDEN",
     });
   }
   next();
