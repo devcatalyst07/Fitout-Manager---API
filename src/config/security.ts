@@ -60,9 +60,17 @@ const getCookieDomain = (): string | undefined => {
   if (process.env.NODE_ENV === 'production') {
     return undefined;
   }
-  
-  // In development, use localhost
-  return process.env.COOKIE_DOMAIN || undefined;
+
+  // In development, only set a domain if it's NOT localhost
+  const configuredDomain = process.env.COOKIE_DOMAIN;
+  if (!configuredDomain) return undefined;
+
+  const lowerDomain = configuredDomain.toLowerCase();
+  if (lowerDomain === 'localhost' || lowerDomain === '127.0.0.1') {
+    return undefined;
+  }
+
+  return configuredDomain;
 };
 
 /**
@@ -84,6 +92,34 @@ const getSameSite = (): 'strict' | 'lax' | 'none' => {
   
   // Development default: 'lax' for same-domain cookies
   return 'lax';
+};
+
+/**
+ * Parse a duration string into milliseconds.
+ * Supports: ms, s, m, h, d (e.g., "30m", "7d").
+ * Falls back to a plain number (milliseconds).
+ */
+const parseDurationMs = (value: string, fallbackMs: number): number => {
+  const trimmed = value.trim().toLowerCase();
+  const match = trimmed.match(/^(\d+)(ms|s|m|h|d)?$/);
+  if (!match) return fallbackMs;
+
+  const amount = parseInt(match[1], 10);
+  const unit = match[2] || 'ms';
+
+  switch (unit) {
+    case 'd':
+      return amount * 24 * 60 * 60 * 1000;
+    case 'h':
+      return amount * 60 * 60 * 1000;
+    case 'm':
+      return amount * 60 * 1000;
+    case 's':
+      return amount * 1000;
+    case 'ms':
+    default:
+      return amount;
+  }
 };
 
 /**
@@ -157,7 +193,7 @@ export const securityConfig = {
       httpOnly: true,
       secure: isSecure(),
       sameSite: getSameSite(),
-      maxAge: parseInt(process.env.REFRESH_TOKEN_EXPIRY || '2592000000'), // 30 days
+      maxAge: parseDurationMs(process.env.REFRESH_TOKEN_EXPIRY || '30d', 2592000000),
       domain: getCookieDomain(),
       path: '/api/auth',
     },

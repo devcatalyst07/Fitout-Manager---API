@@ -1,25 +1,30 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import mongoose, { Schema, Document } from "mongoose";
 
 export interface IUser extends Document {
   _id: mongoose.Types.ObjectId;
   name: string;
   email: string;
   password: string;
-  role: 'user' | 'admin';
+  role: "user" | "admin";
   roleId?: mongoose.Types.ObjectId;
   tokenVersion: number;
   subscriptionType?: string;
   isActive: boolean;
-  
+
   // Profile fields
   firstName?: string;
   lastName?: string;
   username?: string;
   profilePhoto?: string;
-  
+
+  // Role request tracking
+  roleRequestPending?: boolean;
+  roleRequestSentTo?: string;
+  roleRequestSentAt?: Date;
+
   // Stats
   totalProjects?: number;
-  
+
   // Timestamps
   createdAt: Date;
   updatedAt: Date;
@@ -29,30 +34,30 @@ const userSchema = new Schema<IUser>(
   {
     name: {
       type: String,
-      required: [true, 'Name is required'],
+      required: [true, "Name is required"],
       trim: true,
     },
     email: {
       type: String,
-      required: [true, 'Email is required'],
+      required: [true, "Email is required"],
       unique: true,
       lowercase: true,
       trim: true,
-      match: [/^\S+@\S+\.\S+$/, 'Please provide a valid email'],
+      match: [/^\S+@\S+\.\S+$/, "Please provide a valid email"],
     },
     password: {
       type: String,
-      required: [true, 'Password is required'],
-      minlength: [6, 'Password must be at least 6 characters'],
+      required: [true, "Password is required"],
+      minlength: [6, "Password must be at least 6 characters"],
     },
     role: {
       type: String,
-      enum: ['user', 'admin'],
-      default: 'user',
+      enum: ["user", "admin"],
+      default: "user",
     },
     roleId: {
       type: Schema.Types.ObjectId,
-      ref: 'Role',
+      ref: "Role",
       required: false,
     },
     tokenVersion: {
@@ -61,14 +66,14 @@ const userSchema = new Schema<IUser>(
     },
     subscriptionType: {
       type: String,
-      enum: ['Starter', 'Team', 'Enterprise'],
-      default: 'Starter',
+      enum: ["Starter", "Team", "Enterprise"],
+      default: "Starter",
     },
     isActive: {
       type: Boolean,
       default: true,
     },
-    
+
     // Profile fields
     firstName: {
       type: String,
@@ -85,9 +90,23 @@ const userSchema = new Schema<IUser>(
     },
     profilePhoto: {
       type: String,
-      default: '',
+      default: "",
     },
-    
+
+    // Role request tracking
+    roleRequestPending: {
+      type: Boolean,
+      default: false,
+    },
+    roleRequestSentTo: {
+      type: String,
+      trim: true,
+      lowercase: true,
+    },
+    roleRequestSentAt: {
+      type: Date,
+    },
+
     // Stats
     totalProjects: {
       type: Number,
@@ -96,7 +115,7 @@ const userSchema = new Schema<IUser>(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Indexes for better performance
@@ -106,12 +125,12 @@ userSchema.index({ isActive: 1 });
 userSchema.index({ username: 1 });
 
 // Virtual for id
-userSchema.virtual('id').get(function () {
+userSchema.virtual("id").get(function () {
   return this._id.toHexString();
 });
 
 // Ensure virtuals are included in JSON
-userSchema.set('toJSON', {
+userSchema.set("toJSON", {
   virtuals: true,
   versionKey: false,
   transform: (doc, ret) => {
@@ -120,4 +139,4 @@ userSchema.set('toJSON', {
   },
 });
 
-export default mongoose.model<IUser>('User', userSchema);
+export default mongoose.model<IUser>("User", userSchema);

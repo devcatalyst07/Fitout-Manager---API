@@ -1,11 +1,11 @@
-import jwt from 'jsonwebtoken';
-import crypto from 'crypto';
-import { securityConfig } from '../config/security';
+import jwt from "jsonwebtoken";
+import crypto from "crypto";
+import { securityConfig } from "../config/security";
 
 export interface TokenPayload {
   id: string;
   email: string;
-  role: 'user' | 'admin';
+  role: "user" | "admin";
   name: string;
   roleId?: string;
   sessionId: string;
@@ -15,6 +15,7 @@ export interface RefreshTokenPayload {
   id: string;
   sessionId: string;
   tokenVersion: number;
+  roleId?: string; // Include roleId so we can detect removal
 }
 
 /**
@@ -23,8 +24,8 @@ export interface RefreshTokenPayload {
 export const generateAccessToken = (payload: TokenPayload): string => {
   return jwt.sign(payload, securityConfig.jwt.accessSecret, {
     expiresIn: securityConfig.jwt.accessExpiry as any,
-    issuer: 'fitout-manager-api',
-    audience: 'fitout-manager-frontend',
+    issuer: "fitout-manager-api",
+    audience: "fitout-manager-frontend",
   });
 };
 
@@ -34,8 +35,8 @@ export const generateAccessToken = (payload: TokenPayload): string => {
 export const generateRefreshToken = (payload: RefreshTokenPayload): string => {
   return jwt.sign(payload, securityConfig.jwt.refreshSecret, {
     expiresIn: securityConfig.jwt.refreshExpiry as any,
-    issuer: 'fitout-manager-api',
-    audience: 'fitout-manager-frontend',
+    issuer: "fitout-manager-api",
+    audience: "fitout-manager-frontend",
   });
 };
 
@@ -45,11 +46,11 @@ export const generateRefreshToken = (payload: RefreshTokenPayload): string => {
 export const verifyAccessToken = (token: string): TokenPayload => {
   try {
     return jwt.verify(token, securityConfig.jwt.accessSecret, {
-      issuer: 'fitout-manager-api',
-      audience: 'fitout-manager-frontend',
+      issuer: "fitout-manager-api",
+      audience: "fitout-manager-frontend",
     }) as TokenPayload;
   } catch (error) {
-    throw new Error('Invalid or expired access token');
+    throw new Error("Invalid or expired access token");
   }
 };
 
@@ -59,11 +60,11 @@ export const verifyAccessToken = (token: string): TokenPayload => {
 export const verifyRefreshToken = (token: string): RefreshTokenPayload => {
   try {
     return jwt.verify(token, securityConfig.jwt.refreshSecret, {
-      issuer: 'fitout-manager-api',
-      audience: 'fitout-manager-frontend',
+      issuer: "fitout-manager-api",
+      audience: "fitout-manager-frontend",
     }) as RefreshTokenPayload;
   } catch (error) {
-    throw new Error('Invalid or expired refresh token');
+    throw new Error("Invalid or expired refresh token");
   }
 };
 
@@ -71,14 +72,14 @@ export const verifyRefreshToken = (token: string): RefreshTokenPayload => {
  * Generate unique session ID
  */
 export const generateSessionId = (): string => {
-  return crypto.randomBytes(32).toString('hex');
+  return crypto.randomBytes(32).toString("hex");
 };
 
 /**
  * Generate CSRF token
  */
 export const generateCsrfToken = (): string => {
-  return crypto.randomBytes(32).toString('hex');
+  return crypto.randomBytes(32).toString("hex");
 };
 
 /**
@@ -86,9 +87,9 @@ export const generateCsrfToken = (): string => {
  */
 export const hashCsrfToken = (token: string): string => {
   return crypto
-    .createHmac('sha256', securityConfig.csrf.secret)
+    .createHmac("sha256", securityConfig.csrf.secret)
     .update(token)
-    .digest('hex');
+    .digest("hex");
 };
 
 /**

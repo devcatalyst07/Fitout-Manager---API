@@ -33,6 +33,8 @@ export const authMiddleware = async (
     const token = req.cookies[securityConfig.cookies.session.name];
 
     if (!token) {
+      const cookieNames = Object.keys(req.cookies || {});
+      console.log('Auth token missing. Cookies received:', cookieNames);
       return res.status(401).json({
         message: 'Authentication required',
         code: 'AUTH_TOKEN_MISSING',
@@ -44,6 +46,7 @@ export const authMiddleware = async (
     try {
       decoded = jwt.verify(token, securityConfig.jwt.accessSecret);
     } catch (error: any) {
+      console.log('Auth token verify failed:', error?.name || 'UnknownError');
       if (error.name === 'TokenExpiredError') {
         return res.status(401).json({
           message: 'Token expired',
