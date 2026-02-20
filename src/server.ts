@@ -6,6 +6,7 @@ import app from './app';
 import { connectDB, getConnectionStatus } from './config/database';
 import { createAdmin } from './seed/createAdmin';
 import { getAllowedOrigins } from './config/security';
+import { cleanupUnverifiedUsers } from './utils/cleanup';
 
 /**
  * Vercel Serverless Function Handler
@@ -45,6 +46,9 @@ async function initialize(): Promise<void> {
       // Create admin user if it doesn't exist
       await createAdmin();
       console.log('   Admin user check complete');
+      
+      // Run cleanup for unverified users (serverless cold start)
+      await cleanupUnverifiedUsers();
       
       isInitialized = true;
       console.log('Application initialized successfully');

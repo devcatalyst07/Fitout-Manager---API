@@ -22,6 +22,11 @@ export interface IUser extends Document {
   roleRequestSentTo?: string;
   roleRequestSentAt?: Date;
 
+  // Email verification
+  emailVerified: boolean;
+  emailVerificationCode?: string;
+  emailVerificationExpires?: Date;
+
   // Stats
   totalProjects?: number;
 
@@ -104,6 +109,18 @@ const userSchema = new Schema<IUser>(
       lowercase: true,
     },
     roleRequestSentAt: {
+      type: Date,
+    },
+
+    // Email verification
+    emailVerified: {
+      type: Boolean,
+      default: false,
+    },
+    emailVerificationCode: {
+      type: String,
+    },
+    emailVerificationExpires: {
       type: Date,
     },
 

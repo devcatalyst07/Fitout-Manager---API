@@ -4,6 +4,7 @@ dotenv.config();
 import app from './app';
 import { connectDB } from './config/database';
 import { createAdmin } from './seed/createAdmin';
+import { startCleanupScheduler } from './utils/cleanup';
 
 const PORT = process.env.PORT || 5000;
 
@@ -16,6 +17,9 @@ const startServer = async () => {
 
     // Create admin user
     await createAdmin();
+
+    // Start cleanup scheduler for unverified users
+    startCleanupScheduler();
 
     // Start server
     app.listen(PORT, () => {

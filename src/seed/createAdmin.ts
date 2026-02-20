@@ -19,13 +19,24 @@ export const createAdmin = async () => {
         totalProjects: 0,
         isActive: true,
         tokenVersion: 0,
+        emailVerified: true,
+        emailVerificationCode: undefined,
+        emailVerificationExpires: undefined,
       });
 
       console.log('Admin user created');
       console.log('Email: superadmin@fitoutmanager.com');
       console.log('Password: bryankaafitoutmanager');
     } else {
-      console.log('Admin user already exists');
+      if (!adminExists.emailVerified) {
+        adminExists.emailVerified = true;
+        adminExists.emailVerificationCode = undefined;
+        adminExists.emailVerificationExpires = undefined;
+        await adminExists.save();
+        console.log('Admin user verified');
+      } else {
+        console.log('Admin user already exists');
+      }
     }
   } catch (error) {
     console.error('Failed to create admin:', error);

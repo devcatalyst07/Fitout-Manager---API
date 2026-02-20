@@ -6,8 +6,52 @@ import Project from "../models/Projects"; // Import Project model
 import Notification from "../models/Notification";
 import Role from "../models/Role";
 import { invalidateUserCache } from "../utils/cache";
+import nodemailer from "nodemailer";
 
 const router = express.Router();
+
+const sendRoleAssignedEmail = async (
+  targetEmail: string,
+  userName: string,
+  roleName: string,
+  assignedBy: string,
+) => {
+  if (
+    !process.env.SMTP_HOST ||
+    !process.env.SMTP_PORT ||
+    !process.env.SMTP_USER ||
+    !process.env.SMTP_PASS
+  ) {
+    console.warn("Email credentials are not configured. Skipping email.");
+    return;
+  }
+
+  const smtpPort = parseInt(process.env.SMTP_PORT, 10);
+  const smtpSecure = process.env.SMTP_SECURE === "true";
+
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: smtpPort,
+    secure: smtpSecure,
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+  });
+
+  await transporter.sendMail({
+    from: process.env.EMAIL_FROM || '"Fitout Manager" <noreply@fitoutmanager.com>',
+    to: targetEmail,
+    subject: "Your role has been assigned",
+    html: `
+      <h2>Role Assigned</h2>
+      <p>Hello ${userName},</p>
+      <p>You have been assigned the role: <strong>${roleName}</strong>.</p>
+      <p>You can now access the platform.</p>
+      <p>Assigned by: ${assignedBy}</p>
+    `,
+  });
+};
 
 router.get(
   "/dashboard",
@@ -128,7 +172,7 @@ router.get(
     try {
       const users = await User.find({ role: "user" })
         .select(
-          "name email roleId roleRequestPending roleRequestSentTo roleRequestSentAt",
+          "name email username isActive emailVerified roleId roleRequestPending roleRequestSentTo roleRequestSentAt createdAt",
         )
         .sort({ name: 1 });
 
@@ -137,15 +181,53 @@ router.get(
           id: u._id,
           name: u.name,
           email: u.email,
+          username: u.username,
+          isActive: u.isActive,
+          emailVerified: u.emailVerified,
           roleId: u.roleId?.toString() || null,
           roleRequestPending: u.roleRequestPending || false,
           roleRequestSentTo: u.roleRequestSentTo,
           roleRequestSentAt: u.roleRequestSentAt,
+          createdAt: u.createdAt,
         })),
       );
     } catch (error) {
       console.error("Get users error:", error);
       res.status(500).json({ message: "Failed to fetch users" });
+    }
+  },
+);
+
+// Delete a user account (admin only)
+router.delete(
+  "/users/:userId",
+  authMiddleware,
+  adminOnly,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { userId } = req.params;
+
+      if (!userId) {
+        return res.status(400).json({ message: "User ID is required" });
+      }
+
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      if (user.role === "admin") {
+        return res.status(400).json({ message: "Cannot delete admin user" });
+      }
+
+      await Notification.deleteMany({ recipientId: user._id });
+      await User.findByIdAndDelete(userId);
+      await invalidateUserCache(userId);
+
+      res.json({ message: "User deleted successfully" });
+    } catch (error) {
+      console.error("Delete user error:", error);
+      res.status(500).json({ message: "Failed to delete user" });
     }
   },
 );
@@ -211,6 +293,17 @@ router.put(
             assignedBy: req.user?.name || "Admin",
           },
         });
+
+        try {
+          await sendRoleAssignedEmail(
+            user.email,
+            user.name,
+            roleInfo.name,
+            req.user?.name || "Admin",
+          );
+        } catch (emailError) {
+          console.error("Role assigned email failed:", emailError);
+        }
 
         console.log(
           `Role ${roleInfo.name} assigned to user ${user.email}, notification created`,

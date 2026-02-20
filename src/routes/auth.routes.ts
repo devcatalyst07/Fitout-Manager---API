@@ -4,6 +4,8 @@
 import express from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
+import nodemailer from "nodemailer";
 import User from "../models/User";
 import Notification from "../models/Notification";
 import { authMiddleware } from "../middleware/auth";
@@ -17,9 +19,61 @@ import {
 import { clearCsrfToken } from "../middleware/csrf";
 import { cacheUser, invalidateUserCache } from "../utils/cache";
 import { authRateLimiter } from "../middleware/security";
+import { cleanupUnverifiedUsers } from "../utils/cleanup";
 import { generateFingerprint } from "../middleware/security";
 
 const router = express.Router();
+
+const generateVerificationCode = (): string =>
+  Math.floor(100000 + Math.random() * 900000).toString();
+
+const hashVerificationCode = (code: string): string =>
+  crypto.createHash("sha256").update(code).digest("hex");
+
+const sendVerificationCodeEmail = async (
+  targetEmail: string,
+  name: string,
+  code: string,
+) => {
+  // Check for email credentials
+  if (
+    !process.env.SMTP_HOST ||
+    !process.env.SMTP_PORT ||
+    !process.env.SMTP_USER ||
+    !process.env.SMTP_PASS
+  ) {
+    throw new Error("Email credentials are not configured");
+  }
+
+  const smtpPort = parseInt(process.env.SMTP_PORT, 10);
+  const smtpSecure = process.env.SMTP_SECURE === "true";
+
+  // Create transporter
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: smtpPort,
+    secure: smtpSecure,
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+  });
+
+  // Send email
+  await transporter.sendMail({
+    from: process.env.EMAIL_FROM || '"Fitout Manager" <noreply@fitoutmanager.com>',
+    to: targetEmail,
+    subject: "Verify your Fitout Manager account",
+    html: `
+      <h2>Email Verification Code</h2>
+      <p>Hello ${name},</p>
+      <p>Use this code to verify your account:</p>
+      <p style="font-size: 28px; font-weight: bold; letter-spacing: 4px;">${code}</p>
+      <p>This code will expire in 10 minutes.</p>
+      <p>If you did not create this account, you can ignore this email.</p>
+    `,
+  });
+};
 
 /**
  * Register - Create new user account
@@ -45,6 +99,30 @@ router.post(
       // Check if user already exists
       const existingUser = await User.findOne({ email: email.toLowerCase() });
       if (existingUser) {
+        if (!existingUser.emailVerified) {
+          // Auto-resend verification code for unverified users
+          const verificationCode = generateVerificationCode();
+          existingUser.emailVerificationCode =
+            hashVerificationCode(verificationCode);
+          existingUser.emailVerificationExpires = new Date(
+            Date.now() + 10 * 60 * 1000,
+          );
+          await existingUser.save();
+
+          await sendVerificationCodeEmail(
+            existingUser.email,
+            existingUser.name,
+            verificationCode,
+          );
+
+          return res.status(409).json({
+            message:
+              "This email is already registered but not verified yet. A new verification code has been sent to your email.",
+            code: "EMAIL_NOT_VERIFIED",
+            verificationRequired: true,
+          });
+        }
+
         return res.status(400).json({
           message: "User already exists",
           code: "USER_EXISTS",
@@ -53,6 +131,9 @@ router.post(
 
       // Hash password
       const hashedPassword = await bcrypt.hash(password, 12);
+      const verificationCode = generateVerificationCode();
+      const verificationCodeHash = hashVerificationCode(verificationCode);
+      const verificationExpires = new Date(Date.now() + 10 * 60 * 1000);
 
       // Create user
       const user = await User.create({
@@ -60,71 +141,41 @@ router.post(
         email: email.toLowerCase(),
         password: hashedPassword,
         role: accountRole,
-        subscriptionType: subscriptionType || "Starter",
+        subscriptionType:
+          accountRole === "admin" ? subscriptionType || "Starter" : "Starter",
         tokenVersion: 0, // Initialize token version
+        emailVerified: false,
+        emailVerificationCode: verificationCodeHash,
+        emailVerificationExpires: verificationExpires,
       });
 
-      // Generate session ID
-      const sessionId = generateSessionId();
+      await sendVerificationCodeEmail(user.email, user.name, verificationCode);
 
-      // Generate tokens
-      const accessToken = generateAccessToken({
-        id: user._id.toString(),
-        email: user.email,
-        role: user.role,
-        name: user.name,
-        sessionId,
-        roleId: user.roleId?.toString(),
-      });
-
-      const refreshToken = generateRefreshToken({
-        id: user._id.toString(),
-        sessionId,
-        tokenVersion: 0,
-        roleId: user.roleId?.toString(),
-      });
-
-      // Set cookies
-      res.cookie(securityConfig.cookies.session.name, accessToken, {
-        httpOnly: true,
-        secure: securityConfig.cookies.session.secure,
-        sameSite: securityConfig.cookies.session.sameSite,
-        maxAge: securityConfig.cookies.session.maxAge,
-        domain: securityConfig.cookies.session.domain,
-      });
-
-      res.cookie(securityConfig.cookies.refresh.name, refreshToken, {
-        httpOnly: true,
-        secure: securityConfig.cookies.refresh.secure,
-        sameSite: securityConfig.cookies.refresh.sameSite,
-        maxAge: securityConfig.cookies.refresh.maxAge,
-        domain: securityConfig.cookies.refresh.domain,
-        path: securityConfig.cookies.refresh.path,
-      });
-
-      // Cache user
-      await cacheUser(user._id.toString(), {
-        id: user._id.toString(),
-        email: user.email,
-        role: user.role,
-        name: user.name,
-        roleId: user.roleId ? user.roleId.toString() : undefined,
-      });
-
-      console.log("User registered:", user.email, "as", accountRole);
+      console.log(
+        "User registered (pending verification):",
+        user.email,
+        "as",
+        accountRole,
+      );
 
       res.status(201).json({
-        message: "User registered successfully",
-        user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-          roleId: user.roleId ? user.roleId.toString() : undefined,
-        },
+        message:
+          "Account created. A verification code has been sent to your email.",
+        verificationRequired: true,
+        email: user.email,
+        role: user.role,
       });
     } catch (error: any) {
       console.error("Registration error:", error);
+
+      if (error?.message === "Email credentials are not configured") {
+        return res.status(500).json({
+          message:
+            "Email service is not configured. Please set SMTP credentials (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS) in backend environment.",
+          code: "EMAIL_SERVICE_NOT_CONFIGURED",
+        });
+      }
+
       res.status(500).json({
         message: "Registration failed",
         code: "REGISTRATION_ERROR",
@@ -166,6 +217,14 @@ router.post(
         return res.status(401).json({
           message: "Invalid credentials",
           code: "INVALID_CREDENTIALS",
+        });
+      }
+
+      if (!user.emailVerified) {
+        return res.status(403).json({
+          message: "Please verify your email before logging in.",
+          code: "EMAIL_NOT_VERIFIED",
+          verificationRequired: true,
         });
       }
 
@@ -542,14 +601,150 @@ router.post(
 );
 
 /**
+ * Verify Email Code - mark account as verified
+ */
+router.post(
+  "/verify-email-code",
+  authRateLimiter,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { email, code } = req.body;
+
+      if (!email || !code) {
+        return res.status(400).json({
+          message: "Email and verification code are required",
+          code: "VALIDATION_ERROR",
+        });
+      }
+
+      const user = await User.findOne({ email: email.toLowerCase() });
+      if (!user) {
+        return res.status(404).json({
+          message: "User not found",
+          code: "USER_NOT_FOUND",
+        });
+      }
+
+      if (user.emailVerified) {
+        return res.json({
+          message: "Email is already verified",
+          verified: true,
+        });
+      }
+
+      if (!user.emailVerificationCode || !user.emailVerificationExpires) {
+        return res.status(400).json({
+          message: "No active verification code. Please resend a new code.",
+          code: "VERIFICATION_CODE_MISSING",
+        });
+      }
+
+      if (user.emailVerificationExpires.getTime() < Date.now()) {
+        return res.status(400).json({
+          message: "Verification code has expired. Please request a new code.",
+          code: "VERIFICATION_CODE_EXPIRED",
+        });
+      }
+
+      const codeHash = hashVerificationCode(String(code));
+      if (user.emailVerificationCode !== codeHash) {
+        return res.status(400).json({
+          message: "Invalid verification code",
+          code: "INVALID_VERIFICATION_CODE",
+        });
+      }
+
+      user.emailVerified = true;
+      user.emailVerificationCode = undefined;
+      user.emailVerificationExpires = undefined;
+      await user.save();
+
+      await invalidateUserCache(user._id.toString());
+
+      return res.json({
+        message: "Email verified successfully",
+        verified: true,
+      });
+    } catch (error: any) {
+      console.error("Verify email code error:", error);
+      return res.status(500).json({
+        message: "Failed to verify email",
+        code: "EMAIL_VERIFICATION_ERROR",
+      });
+    }
+  },
+);
+
+/**
+ * Resend Email Verification Code
+ */
+router.post(
+  "/resend-verification-code",
+  authRateLimiter,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { email } = req.body;
+
+      if (!email) {
+        return res.status(400).json({
+          message: "Email is required",
+          code: "VALIDATION_ERROR",
+        });
+      }
+
+      const user = await User.findOne({ email: email.toLowerCase() });
+      if (!user) {
+        return res.status(404).json({
+          message: "User not found",
+          code: "USER_NOT_FOUND",
+        });
+      }
+
+      if (user.emailVerified) {
+        return res.status(400).json({
+          message: "Email is already verified",
+          code: "EMAIL_ALREADY_VERIFIED",
+        });
+      }
+
+      const verificationCode = generateVerificationCode();
+      user.emailVerificationCode = hashVerificationCode(verificationCode);
+      user.emailVerificationExpires = new Date(Date.now() + 10 * 60 * 1000);
+      await user.save();
+
+      await sendVerificationCodeEmail(user.email, user.name, verificationCode);
+
+      return res.json({
+        message: "A new verification code has been sent to your email",
+        verificationRequired: true,
+      });
+    } catch (error: any) {
+      console.error("Resend verification code error:", error);
+
+      if (error?.message === "Email credentials are not configured") {
+        return res.status(500).json({
+          message:
+            "Email service is not configured. Please set SMTP credentials (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS) in backend environment.",
+          code: "EMAIL_SERVICE_NOT_CONFIGURED",
+        });
+      }
+
+      return res.status(500).json({
+        message: "Failed to resend verification code",
+        code: "RESEND_VERIFICATION_ERROR",
+      });
+    }
+  },
+);
+
+/**
  * Request Role - Send role request email to admin
  */
 router.post(
   "/request-role",
-  authMiddleware,
   async (req: express.Request, res: express.Response) => {
     try {
-      const { adminEmail } = req.body;
+      const { adminEmail, userEmail } = req.body;
 
       // Validation
       if (!adminEmail) {
@@ -559,19 +754,31 @@ router.post(
         });
       }
 
-      if (!req.user) {
-        return res.status(401).json({
-          message: "Not authenticated",
-          code: "NOT_AUTHENTICATED",
+      const requesterEmail = (req.user?.email || userEmail || "")
+        .toString()
+        .toLowerCase();
+
+      if (!requesterEmail) {
+        return res.status(400).json({
+          message: "User email is required",
+          code: "VALIDATION_ERROR",
         });
       }
 
       // Get user
-      const user = await User.findById(req.user.id);
+      const user = await User.findOne({ email: requesterEmail });
       if (!user) {
         return res.status(404).json({
           message: "User not found",
           code: "USER_NOT_FOUND",
+        });
+      }
+
+      if (!user.emailVerified) {
+        return res.status(403).json({
+          message:
+            "Please verify your email before requesting role assignment.",
+          code: "EMAIL_NOT_VERIFIED",
         });
       }
 
@@ -704,6 +911,44 @@ router.post(
         error: error.message,
         details:
           process.env.NODE_ENV === "development" ? error.stack : undefined,
+      });
+    }
+  },
+);
+
+/**
+ * Cleanup endpoint for unverified users
+ * Can be called manually or via Vercel Cron Jobs
+ * For security, should require an API key in production
+ */
+router.post(
+  "/cleanup-unverified",
+  async (req: express.Request, res: express.Response) => {
+    try {
+      // Optional: Add API key check for security
+      const apiKey = req.headers["x-api-key"];
+      if (
+        process.env.NODE_ENV === "production" &&
+        apiKey !== process.env.CLEANUP_API_KEY
+      ) {
+        return res.status(403).json({
+          message: "Unauthorized",
+          code: "UNAUTHORIZED",
+        });
+      }
+
+      await cleanupUnverifiedUsers();
+
+      res.json({
+        message: "Cleanup completed successfully",
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error: any) {
+      console.error("Cleanup endpoint error:", error);
+      res.status(500).json({
+        message: "Cleanup failed",
+        code: "CLEANUP_ERROR",
+        error: error.message,
       });
     }
   },
