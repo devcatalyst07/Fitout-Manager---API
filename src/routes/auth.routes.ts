@@ -61,7 +61,8 @@ const sendVerificationCodeEmail = async (
 
   // Send email
   await transporter.sendMail({
-    from: process.env.EMAIL_FROM || '"Fitout Manager" <noreply@fitoutmanager.com>',
+    from:
+      process.env.EMAIL_FROM || '"Fitout Manager" <noreply@fitoutmanager.com>',
     to: targetEmail,
     subject: "Verify your Fitout Manager account",
     html: `
