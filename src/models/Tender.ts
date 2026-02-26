@@ -1,148 +1,187 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import mongoose, { Schema, Document } from "mongoose";
 
-export interface ITender extends Document {
-  projectId: string;
-  tenderNumber: string;
-  title: string;
-  description: string;
-  category: 'Design' | 'Construction' | 'Joinery' | 'MEP' | 'Fixtures' | 'Other';
-  status: 'Draft' | 'Issued' | 'RFI' | 'Bid Evaluation' | 'Awarded' | 'Cancelled';
-  budgetedAmount: number;
-  issueDate?: Date;
-  submissionDeadline?: Date;
-  awardDate?: Date;
-  
-  documents: Array<{
-    fileName: string;
-    fileUrl: string;
-    fileType: string;
-    fileSize: number;
-    uploadedAt: Date;
-  }>;
-  
-  scopeOfWorks: string;
-  specifications: string;
-  complianceRequirements: string[];
-  
-  shortlistedContractors: Array<{
-    contractorId: string;
-    name: string;
-    email: string;
-    phone?: string;
-    invitedAt?: Date;
-    bidToken?: string;          // <-- unique token for public bid submission
-    status: 'Invited' | 'Viewed' | 'Submitted' | 'Declined';
-  }>;
-  
-  awardedContractorId?: string;
-  awardedAmount?: number;
-  awardedReason?: string;
-  
-  createdBy: string;
-  createdAt: Date;
-  updatedAt: Date;
-  
-  aiRecommendations?: {
-    suggestedContractors: Array<{
-      contractorId: string;
-      name: string;
-      score: number;
-      reasoning: string;
-    }>;
-    estimatedCost?: {
-      low: number;
-      mid: number;
-      high: number;
-    };
-    riskAssessment?: string;
-    generatedAt: Date;
-  };
-}
+// ─── Sub-schemas ───────────────────────────────────────────────
 
-const TenderSchema: Schema = new Schema(
+const AttachmentSchema = new Schema(
   {
-    projectId: { type: Schema.Types.ObjectId, ref: 'Project', required: true },
+    fileName: { type: String, required: true },
+    fileUrl: { type: String, required: true },
+    fileType: { type: String, required: true },
+    fileSize: { type: Number },
+    uploadedBy: { type: Schema.Types.ObjectId, ref: "User" },
+    uploadedAt: { type: Date, default: Date.now },
+    section: {
+      type: String,
+      enum: ["scope", "specifications", "general", "compliance"],
+      default: "general",
+    },
+  },
+  { _id: true }
+);
+
+const ShortlistedContractorSchema = new Schema(
+  {
+    contractorId: {
+      type: Schema.Types.ObjectId,
+      ref: "Contractor",
+      required: true,
+    },
+    name: { type: String, required: true },
+    email: { type: String, required: true },
+    phone: { type: String },
+    status: {
+      type: String,
+      enum: ["Invited", "Viewed", "Bid Submitted", "Declined", "Awarded"],
+      default: "Invited",
+    },
+    invitedAt: { type: Date },
+    bidToken: { type: String },
+    tokenExpiry: { type: Date },
+    lastNotifiedAt: { type: Date },
+  },
+  { _id: false }
+);
+
+// ─── Main Tender Schema ────────────────────────────────────────
+
+const TenderSchema = new Schema(
+  {
+    projectId: {
+      type: Schema.Types.ObjectId,
+      ref: "Project",
+      required: true,
+    },
     tenderNumber: { type: String, required: true, unique: true },
     title: { type: String, required: true },
     description: { type: String },
     category: {
       type: String,
-      enum: ['Design', 'Construction', 'Joinery', 'MEP', 'Fixtures', 'Other'],
-      default: 'Construction',
+      enum: [
+        "Construction",
+        "Design",
+        "Joinery",
+        "MEP",
+        "Fixtures",
+        "Other",
+      ],
+      default: "Construction",
     },
     status: {
       type: String,
-      enum: ['Draft', 'Issued', 'RFI', 'Bid Evaluation', 'Awarded', 'Cancelled'],
-      default: 'Draft',
+      enum: [
+        "Draft",
+        "Issued",
+        "RFI",
+        "Bid Evaluation",
+        "Awarded",
+        "Cancelled",
+      ],
+      default: "Draft",
     },
-    budgetedAmount: { type: Number, required: true, default: 0 },
+
+    // Financial
+    budgetedAmount: { type: Number, required: true },
+    awardedAmount: { type: Number },
+    awardedContractorId: { type: Schema.Types.ObjectId, ref: "Contractor" },
+    awardedBidId: { type: Schema.Types.ObjectId, ref: "Bid" },
+    awardedReason: { type: String },
+    awardDate: { type: Date },
+
+    // Dates
     issueDate: { type: Date },
     submissionDeadline: { type: Date },
-    awardDate: { type: Date },
-    
-    documents: [
-      {
-        fileName: String,
-        fileUrl: String,
-        fileType: String,
-        fileSize: Number,
-        uploadedAt: { type: Date, default: Date.now },
-      },
-    ],
-    
+
+    // Content
     scopeOfWorks: { type: String },
     specifications: { type: String },
-    complianceRequirements: [String],
-    
-    shortlistedContractors: [
+    complianceRequirements: [{ type: String }],
+
+    // File attachments organized by section
+    documents: [AttachmentSchema],
+
+    // Contractors
+    shortlistedContractors: [ShortlistedContractorSchema],
+
+    // Budget sync flag
+    budgetSynced: { type: Boolean, default: false },
+    budgetItemId: { type: Schema.Types.ObjectId, ref: "BudgetItem" },
+
+    // Meta
+    createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
+
+    // Track modifications after issuance for re-notification
+    lastModifiedAfterIssue: { type: Date },
+    modificationHistory: [
       {
-        contractorId: String,
-        name: String,
-        email: String,
-        phone: String,
-        invitedAt: Date,
-        bidToken: { type: String, index: true },   // <-- indexed for fast lookups
-        status: {
-          type: String,
-          enum: ['Invited', 'Viewed', 'Submitted', 'Declined'],
-          default: 'Invited',
-        },
+        modifiedAt: { type: Date, default: Date.now },
+        modifiedBy: { type: Schema.Types.ObjectId, ref: "User" },
+        changeDescription: { type: String },
+        notificationSent: { type: Boolean, default: false },
       },
     ],
-    
-    awardedContractorId: { type: String },
-    awardedAmount: { type: Number },
-    awardedReason: { type: String },
-    
-    createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    
-    aiRecommendations: {
-      suggestedContractors: [
-        {
-          contractorId: String,
-          name: String,
-          score: Number,
-          reasoning: String,
-        },
-      ],
-      estimatedCost: {
-        low: Number,
-        mid: Number,
-        high: Number,
-      },
-      riskAssessment: String,
-      generatedAt: Date,
-    },
   },
   { timestamps: true }
 );
 
-// Generate tender number
-TenderSchema.pre('validate', async function () {
-  if (!this.tenderNumber) {
-    const count = await mongoose.model('Tender').countDocuments();
-    this.tenderNumber = `TND-${new Date().getFullYear()}-${String(count + 1).padStart(4, '0')}`;
+// Use mongoose.CallbackWithoutResultAndOptionalError for the next parameter type,
+// falling back to a plain callback signature compatible with all Mongoose 6/7/8 versions.
+TenderSchema.pre<mongoose.Document>("save", async function () {
+  const doc = this as any;
+  if (doc.isNew && !doc.tenderNumber) {
+    const count = await mongoose.model("Tender").countDocuments();
+    doc.tenderNumber = `TND-${String(count + 1).padStart(4, "0")}`;
   }
 });
 
-export default mongoose.models.Tender || mongoose.model<ITender>('Tender', TenderSchema);
+export interface ITender extends Document {
+  projectId: mongoose.Types.ObjectId;
+  tenderNumber: string;
+  title: string;
+  description?: string;
+  category: string;
+  status: string;
+  budgetedAmount: number;
+  awardedAmount?: number;
+  awardedContractorId?: mongoose.Types.ObjectId;
+  awardedBidId?: mongoose.Types.ObjectId;
+  awardedReason?: string;
+  awardDate?: Date;
+  issueDate?: Date;
+  submissionDeadline?: Date;
+  scopeOfWorks?: string;
+  specifications?: string;
+  complianceRequirements: string[];
+  documents: Array<{
+    _id: mongoose.Types.ObjectId;
+    fileName: string;
+    fileUrl: string;
+    fileType: string;
+    fileSize?: number;
+    uploadedBy?: mongoose.Types.ObjectId;
+    uploadedAt: Date;
+    section: string;
+  }>;
+  shortlistedContractors: Array<{
+    contractorId: mongoose.Types.ObjectId;
+    name: string;
+    email: string;
+    phone?: string;
+    status: string;
+    invitedAt?: Date;
+    bidToken?: string;
+    tokenExpiry?: Date;
+    lastNotifiedAt?: Date;
+  }>;
+  budgetSynced: boolean;
+  budgetItemId?: mongoose.Types.ObjectId;
+  createdBy: mongoose.Types.ObjectId;
+  lastModifiedAfterIssue?: Date;
+  modificationHistory: Array<{
+    modifiedAt: Date;
+    modifiedBy?: mongoose.Types.ObjectId;
+    changeDescription: string;
+    notificationSent: boolean;
+  }>;
+}
+
+export default mongoose.model<ITender>("Tender", TenderSchema);

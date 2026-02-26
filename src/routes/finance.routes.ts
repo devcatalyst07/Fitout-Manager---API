@@ -207,10 +207,13 @@ router.get("/", authMiddleware, async (req: express.Request, res: express.Respon
     }).length;
 
     // Committed change
+    // FIX: Cast `b` to `any` because `createdAt` is a Mongoose timestamp field not
+    // declared on the IBudgetItem interface. The value is always present at runtime
+    // since the BudgetItem schema uses `{ timestamps: true }`.
     const now = new Date();
     const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const lastMonthBudgetItems = budgetItems.filter(
-      (b) => new Date(b.createdAt) < lastMonth,
+      (b) => new Date((b as any).createdAt) < lastMonth,
     );
     const lastMonthCommitted = lastMonthBudgetItems
       .filter((b) =>
