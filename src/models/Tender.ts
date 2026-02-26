@@ -51,7 +51,10 @@ const TenderSchema = new Schema(
       ref: "Project",
       required: true,
     },
-    tenderNumber: { type: String, required: true, unique: true },
+    // FIX: removed required:true — the pre-save hook sets this before validation,
+    // but Mongoose runs validation before pre-save completes in some versions.
+    // We enforce uniqueness via the index and generate it reliably in the hook.
+    tenderNumber: { type: String, unique: true },
     title: { type: String, required: true },
     description: { type: String },
     category: {
@@ -123,13 +126,20 @@ const TenderSchema = new Schema(
   { timestamps: true }
 );
 
-// Use mongoose.CallbackWithoutResultAndOptionalError for the next parameter type,
-// falling back to a plain callback signature compatible with all Mongoose 6/7/8 versions.
-TenderSchema.pre<mongoose.Document>("save", async function () {
+// ─── Pre-save hook: generate tenderNumber ─────────────────────
+// FIX: Use an async function WITHOUT a next parameter — when Mongoose sees
+// an async pre-hook with no `next` argument it awaits the returned Promise
+// and handles errors automatically. Passing `next` causes a TypeScript error
+// because Mongoose types the callback as SaveOptions, not CallbackWithoutResult.
+TenderSchema.pre("save", async function () {
   const doc = this as any;
+
   if (doc.isNew && !doc.tenderNumber) {
     const count = await mongoose.model("Tender").countDocuments();
-    doc.tenderNumber = `TND-${String(count + 1).padStart(4, "0")}`;
+    const padded = String(count + 1).padStart(4, "0");
+    // Random 3-char suffix prevents E11000 duplicate key errors under concurrency
+    const rand = Math.random().toString(36).substring(2, 5).toUpperCase();
+    doc.tenderNumber = `TND-${padded}-${rand}`;
   }
 });
 

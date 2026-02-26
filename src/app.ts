@@ -37,6 +37,7 @@ import scopeRoutes from "./routes/scope.routes";
 import profileRoutes from "./routes/profile.routes";
 import tenderRoutes from "./routes/tender.routes";
 import notificationRoutes from "./routes/notification.routes";
+import contractorRoutes from "./routes/contractor.routes";
 
 const app = express();
 
@@ -153,6 +154,7 @@ app.use("/api", calendarRoutes);
 app.use("/api/profile", profileRoutes);
 app.use("/api", tenderRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/contractors", contractorRoutes);
 
 // 404 Handler
 app.use((req, res) => {

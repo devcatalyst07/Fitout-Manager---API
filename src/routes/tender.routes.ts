@@ -3,7 +3,6 @@ import mongoose from "mongoose";
 import multer from "multer";
 import path from "path";
 import crypto from "crypto";
-// FIX: Import the correct exported names from auth middleware
 import { authMiddleware as authenticate, adminOnly as requireAdmin } from "../middleware/auth";
 import Tender from "../models/Tender";
 import Bid from "../models/TenderBid";
@@ -18,6 +17,20 @@ const router = express.Router();
 // ─── Helper: generate unique bid token ─────────────────────────────────────
 function generateBidToken(): string {
   return crypto.randomBytes(32).toString("hex");
+}
+
+// ─── Helper: safely parse a JSON string OR return the value as-is ──────────
+// FIX: FormData always sends values as strings. This helper safely handles
+// both already-parsed arrays/objects and raw JSON strings, preventing
+// JSON.parse from throwing on non-string values.
+function safeJsonParse<T = any>(value: any, fallback: T): T {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== "string") return value as unknown as T;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
 }
 
 // ─── Helper: build tender invitation / update email HTML ───────────────────
@@ -105,7 +118,6 @@ async function notifyContractorsOfUpdate(tender: any): Promise<void> {
     );
   }
 
-  // Mark latest modification as notified
   if (tender.modificationHistory?.length) {
     tender.modificationHistory[tender.modificationHistory.length - 1].notificationSent = true;
   }
@@ -146,7 +158,6 @@ async function syncAwardToBudget(tender: any, bid: any) {
     });
     await budgetItem.save();
 
-    // Increment project committed amount
     await Project.findByIdAndUpdate(tender.projectId, {
       $inc: { committed: bid.bidAmount },
     }).catch((e: any) => console.error("Failed to update project committed amount:", e));
@@ -158,16 +169,8 @@ async function syncAwardToBudget(tender: any, bid: any) {
   }
 }
 
-// ─── Multer Configuration ──────────────────────────────────────────────────
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, path.join(__dirname, "../../uploads/tenders"));
-  },
-  filename: (_req, file, cb) => {
-    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    cb(null, `${uniqueSuffix}${path.extname(file.originalname)}`);
-  },
-});
+// ─── Multer Configuration (memory storage → Cloudinary) ────────────────────
+const storage = multer.memoryStorage();
 
 const upload = multer({
   storage,
@@ -250,7 +253,7 @@ router.get(
       res.json(tenders);
     } catch (error: any) {
       console.error("Get tenders error:", error);
-      res.status(500).json({ message: "Failed to get tenders" });
+      res.status(500).json({ message: "Failed to get tenders", error: error.message });
     }
   }
 );
@@ -264,7 +267,14 @@ router.post(
   async (req: Request, res: Response) => {
     try {
       const { id: projectId } = req.params;
+
+      // FIX: Guard against missing user — authMiddleware should always attach
+      // req.user, but if getCachedUser throws or the JWT is stale, it may not.
       const userId = (req as any).user?.id;
+      if (!userId) {
+        return res.status(401).json({ message: "User not authenticated" });
+      }
+
       const {
         title,
         description,
@@ -273,8 +283,6 @@ router.post(
         submissionDeadline,
         scopeOfWorks,
         specifications,
-        complianceRequirements,
-        shortlistedContractors,
       } = req.body;
 
       if (!title || !budgetedAmount) {
@@ -283,28 +291,40 @@ router.post(
           .json({ message: "Title and budgeted amount are required" });
       }
 
+      // FIX: Use safeJsonParse for all array fields sent via FormData.
+      // FormData always sends values as strings, so JSON.parse is required,
+      // but it must not throw if the value is already an array or is undefined.
+      const complianceRequirements = safeJsonParse<string[]>(
+        req.body.complianceRequirements,
+        []
+      );
+      const rawContractors = safeJsonParse<any[]>(
+        req.body.shortlistedContractors,
+        []
+      );
+
       // Upload any attached files
       const uploadedDocs: any[] = [];
       const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
       if (files) {
         for (const [fieldname, fileList] of Object.entries(files)) {
           for (const file of fileList) {
-            const fileUrl = await uploadToStorage(file, `tenders/${projectId}`);
-            uploadedDocs.push({
-              fileName: file.originalname,
-              fileUrl,
-              fileType: file.mimetype,
-              fileSize: file.size,
-              uploadedBy: userId,
-              section: fieldnameToSection(fieldname),
-            });
+            try {
+              const fileUrl = await uploadToStorage(file, `tenders/${projectId}`);
+              uploadedDocs.push({
+                fileName: file.originalname,
+                fileUrl,
+                fileType: file.mimetype,
+                fileSize: file.size,
+                uploadedBy: userId,
+                section: fieldnameToSection(fieldname),
+              });
+            } catch (uploadErr: any) {
+              console.error(`Failed to upload file ${file.originalname}:`, uploadErr.message);
+              // Continue creating tender without this file rather than failing entirely
+            }
           }
         }
-      }
-
-      let contractors = shortlistedContractors;
-      if (typeof shortlistedContractors === "string") {
-        contractors = JSON.parse(shortlistedContractors);
       }
 
       const tender = new Tender({
@@ -312,13 +332,13 @@ router.post(
         title,
         description,
         category,
-        budgetedAmount,
+        budgetedAmount: Number(budgetedAmount),
         submissionDeadline: submissionDeadline || undefined,
         scopeOfWorks,
         specifications,
-        complianceRequirements: complianceRequirements || [],
+        complianceRequirements,
         documents: uploadedDocs,
-        shortlistedContractors: (contractors || []).map((c: any) => ({
+        shortlistedContractors: rawContractors.map((c: any) => ({
           ...c,
           status: "Invited",
         })),
@@ -330,6 +350,7 @@ router.post(
       res.status(201).json(populated);
     } catch (error: any) {
       console.error("Create tender error:", error);
+      // Return the full error message so the client can display it
       res.status(500).json({ message: "Failed to create tender", error: error.message });
     }
   }
@@ -372,6 +393,9 @@ router.put(
     try {
       const { tenderId } = req.params;
       const userId = (req as any).user?.id;
+      if (!userId) {
+        return res.status(401).json({ message: "User not authenticated" });
+      }
 
       const tender = await Tender.findById(tenderId);
       if (!tender) return res.status(404).json({ message: "Tender not found" });
@@ -392,31 +416,28 @@ router.put(
         submissionDeadline,
         scopeOfWorks,
         specifications,
-        complianceRequirements,
-        shortlistedContractors,
-        removedDocumentIds,
       } = req.body;
 
       if (title !== undefined) tender.title = title;
       if (description !== undefined) tender.description = description;
       if (category !== undefined) tender.category = category;
-      if (budgetedAmount !== undefined) tender.budgetedAmount = budgetedAmount;
+      if (budgetedAmount !== undefined) tender.budgetedAmount = Number(budgetedAmount);
       if (submissionDeadline !== undefined) tender.submissionDeadline = submissionDeadline;
       if (scopeOfWorks !== undefined) tender.scopeOfWorks = scopeOfWorks;
       if (specifications !== undefined) tender.specifications = specifications;
-      if (complianceRequirements !== undefined) {
-        tender.complianceRequirements =
-          typeof complianceRequirements === "string"
-            ? JSON.parse(complianceRequirements)
-            : complianceRequirements;
+
+      // FIX: Use safeJsonParse for complianceRequirements
+      if (req.body.complianceRequirements !== undefined) {
+        tender.complianceRequirements = safeJsonParse<string[]>(
+          req.body.complianceRequirements,
+          tender.complianceRequirements
+        );
       }
 
       // Merge contractor list — preserve existing bid tokens + status
-      if (shortlistedContractors !== undefined) {
-        const contractors =
-          typeof shortlistedContractors === "string"
-            ? JSON.parse(shortlistedContractors)
-            : shortlistedContractors;
+      if (req.body.shortlistedContractors !== undefined) {
+        // FIX: Use safeJsonParse for shortlistedContractors
+        const contractors = safeJsonParse<any[]>(req.body.shortlistedContractors, []);
 
         const existingMap = new Map(
           tender.shortlistedContractors.map((c: any) => [c.contractorId.toString(), c])
@@ -436,11 +457,9 @@ router.put(
       }
 
       // Remove documents
-      if (removedDocumentIds) {
-        const removeIds: string[] =
-          typeof removedDocumentIds === "string"
-            ? JSON.parse(removedDocumentIds)
-            : removedDocumentIds;
+      if (req.body.removedDocumentIds) {
+        // FIX: Use safeJsonParse for removedDocumentIds
+        const removeIds = safeJsonParse<string[]>(req.body.removedDocumentIds, []);
 
         for (const docId of removeIds) {
           const doc = tender.documents.find((d: any) => d._id.toString() === docId);
@@ -456,15 +475,19 @@ router.put(
       if (files) {
         for (const [fieldname, fileList] of Object.entries(files)) {
           for (const file of fileList) {
-            const fileUrl = await uploadToStorage(file, `tenders/${tender.projectId}`);
-            (tender.documents as any[]).push({
-              fileName: file.originalname,
-              fileUrl,
-              fileType: file.mimetype,
-              fileSize: file.size,
-              uploadedBy: userId,
-              section: fieldnameToSection(fieldname),
-            });
+            try {
+              const fileUrl = await uploadToStorage(file, `tenders/${tender.projectId}`);
+              (tender.documents as any[]).push({
+                fileName: file.originalname,
+                fileUrl,
+                fileType: file.mimetype,
+                fileSize: file.size,
+                uploadedBy: userId,
+                section: fieldnameToSection(fieldname),
+              });
+            } catch (uploadErr: any) {
+              console.error(`Failed to upload file ${file.originalname}:`, uploadErr.message);
+            }
           }
         }
       }
@@ -626,11 +649,6 @@ router.post(
 
         const bidUrl = `${frontendUrl}/contractor/bid/${contractor.bidToken}`;
 
-        // FIX: `attachments` is not part of SendEmailParams — document links are
-        // already included in the HTML body via buildTenderEmailHTML, so we drop
-        // the attachments field entirely. If email attachments are needed in the
-        // future, add `attachments?` to the SendEmailParams interface and wire up
-        // SES's raw-message / presigned-URL flow separately.
         await sendEmail({
           to: contractor.email,
           subject: `Tender Invitation: ${tender.tenderNumber} - ${tender.title}`,
@@ -687,7 +705,6 @@ router.post(
       await bid.save();
       await Bid.updateMany({ tenderId, _id: { $ne: bidId } }, { $set: { status: "Rejected" } });
 
-      // Sync to budget
       const budgetItem = await syncAwardToBudget(tender, bid);
       if (budgetItem) {
         (tender as any).budgetSynced = true;
@@ -696,7 +713,6 @@ router.post(
 
       await tender.save();
 
-      // Notify winning contractor
       const winningContractor = (tender.shortlistedContractors as any[]).find(
         (c) => c.contractorId.toString() === bid.contractorId.toString()
       );
@@ -767,7 +783,6 @@ router.put(
 
       await bid.save();
 
-      // Ensure tender is in Bid Evaluation state
       await Tender.findByIdAndUpdate(tenderId, { $set: { status: "Bid Evaluation" } });
 
       res.json(bid);
@@ -798,12 +813,10 @@ router.get("/public/bid/:token", async (req: Request, res: Response) => {
     );
     if (!contractor) return res.status(404).json({ message: "Contractor not found" });
 
-    // Token expiry check
     if (contractor.tokenExpiry && new Date(contractor.tokenExpiry) < new Date()) {
       return res.status(410).json({ message: "This invitation link has expired" });
     }
 
-    // Tender status check
     if (!["Issued", "RFI", "Bid Evaluation"].includes(tender.status)) {
       return res.status(400).json({
         message:
@@ -816,7 +829,6 @@ router.get("/public/bid/:token", async (req: Request, res: Response) => {
     const isOverdue =
       tender.submissionDeadline && new Date(tender.submissionDeadline) < new Date();
 
-    // Mark as Viewed (fire-and-forget)
     if (contractor.status === "Invited") {
       Tender.updateOne(
         { _id: tender._id, "shortlistedContractors.bidToken": token },
@@ -888,7 +900,6 @@ router.post(
 
       const {
         bidAmount,
-        breakdownItems,
         assumptions,
         exclusions,
         proposedDuration,
@@ -899,7 +910,9 @@ router.post(
         return res.status(400).json({ message: "Valid bid amount is required" });
       }
 
-      // Upload contractor attachments
+      // FIX: Use safeJsonParse for breakdownItems
+      const parsedBreakdown = safeJsonParse<any[]>(req.body.breakdownItems, []);
+
       const bidAttachments: any[] = [];
       const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
       if (files) {
@@ -920,19 +933,13 @@ router.post(
         }
       }
 
-      let parsedBreakdown = breakdownItems;
-      if (typeof breakdownItems === "string") {
-        parsedBreakdown = JSON.parse(breakdownItems);
-      }
-
-      // Upsert bid
       const bid = await Bid.findOneAndUpdate(
         { tenderId: tender._id, contractorId: contractor.contractorId },
         {
           contractorName: contractor.name,
           contractorEmail: contractor.email,
           bidAmount,
-          breakdownItems: parsedBreakdown || [],
+          breakdownItems: parsedBreakdown,
           assumptions,
           exclusions,
           proposedDuration: proposedDuration || undefined,
@@ -946,12 +953,10 @@ router.post(
         { upsert: true, new: true, setDefaultsOnInsert: true }
       );
 
-      // Update contractor status on tender
       contractor.status = "Bid Submitted";
       if (tender.status === "Issued") tender.status = "Bid Evaluation";
       await tender.save();
 
-      // Send confirmation email (fire-and-forget)
       sendEmail({
         to: contractor.email,
         subject: `Bid Confirmation: ${tender.tenderNumber} - ${tender.title}`,
