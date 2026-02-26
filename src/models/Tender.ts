@@ -30,6 +30,7 @@ export interface ITender extends Document {
     email: string;
     phone?: string;
     invitedAt?: Date;
+    bidToken?: string;          // <-- unique token for public bid submission
     status: 'Invited' | 'Viewed' | 'Submitted' | 'Declined';
   }>;
   
@@ -100,6 +101,7 @@ const TenderSchema: Schema = new Schema(
         email: String,
         phone: String,
         invitedAt: Date,
+        bidToken: { type: String, index: true },   // <-- indexed for fast lookups
         status: {
           type: String,
           enum: ['Invited', 'Viewed', 'Submitted', 'Declined'],
@@ -136,7 +138,7 @@ const TenderSchema: Schema = new Schema(
 );
 
 // Generate tender number
-TenderSchema.pre('save', async function () {
+TenderSchema.pre('validate', async function () {
   if (!this.tenderNumber) {
     const count = await mongoose.model('Tender').countDocuments();
     this.tenderNumber = `TND-${new Date().getFullYear()}-${String(count + 1).padStart(4, '0')}`;

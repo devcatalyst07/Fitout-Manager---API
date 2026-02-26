@@ -1,25 +1,26 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-import app from "./app";
-import { connectDB } from "./config/database";
-import { createAdmin } from "./seed/createAdmin";
-import { startCleanupScheduler } from "./utils/cleanup";
+import app from './app';
+import { connectDB } from './config/database';
+import { createAdmin } from './seed/createAdmin';
+import { startReminderCron } from './services/reminderService';
 
 const PORT = process.env.PORT || 5000;
 
 const startServer = async () => {
   try {
     // Connect to database
-    console.log("🔌 Connecting to database...");
+    console.log('Connecting to database...');
     await connectDB();
     console.log("Database connected");
 
     // Create admin user
     await createAdmin();
 
-    // Start cleanup scheduler for unverified users
-    startCleanupScheduler();
+    // Start reminder cron job
+    startReminderCron();
+    console.log('Reminder cron started');
 
     // Start server
     app.listen(PORT, () => {
