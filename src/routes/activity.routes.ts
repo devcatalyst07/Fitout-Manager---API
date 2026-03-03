@@ -1,5 +1,6 @@
-import express from 'express';
+import express from "express";
 import { authMiddleware } from "../middleware/auth";
+import { requireProjectAccess } from "../middleware/permissions";
 import ProjectActivity from "../models/ProjectActivity";
 
 const router = express.Router();
@@ -8,6 +9,7 @@ const router = express.Router();
 router.get(
   "/:projectId/activity",
   authMiddleware,
+  requireProjectAccess,
   async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;

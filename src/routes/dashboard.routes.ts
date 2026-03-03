@@ -1,4 +1,4 @@
-import express from 'express';
+import express from "express";
 import { authMiddleware } from "../middleware/auth";
 import Project from "../models/Projects";
 import Task from "../models/Task";
@@ -25,8 +25,8 @@ router.get(
       let projectFilter: any = {};
 
       if (req.user!.role === "admin") {
-        // Admin sees all projects
-        projectFilter = {};
+        // Tenant isolation: admin sees only own projects
+        projectFilter = { userId: req.user!.id };
       } else {
         // User sees only their assigned projects
         const TeamMember = require("../models/TeamMember").default;
@@ -175,10 +175,11 @@ router.get(
       // =====================================
       let brandFilter: any = { isActive: true };
 
-      if (req.user!.role !== "admin") {
-        // Get unique brands from user's projects
-        const userBrands = [...new Set(projects.map((p) => p.brand))];
-        brandFilter.name = { $in: userBrands };
+      // Tenant-safe brand analytics: only brands from scoped projects
+      const scopedBrands = [...new Set(projects.map((p) => p.brand))];
+      brandFilter.name = { $in: scopedBrands };
+      if (req.user!.role === "admin") {
+        brandFilter.createdBy = req.user!.id;
       }
 
       const brands = await Brand.find(brandFilter);

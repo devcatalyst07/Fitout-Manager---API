@@ -1,4 +1,4 @@
-import express from 'express';
+import express from "express";
 import { authMiddleware } from "../middleware/auth";
 import Document from "../models/Document";
 import Project from "../models/Projects";
@@ -62,97 +62,103 @@ const uploadToCloudinary = (buffer: Buffer, options: any) => {
 // GET /api/documents/projects - Get all projects for dropdown
 // ✅ UPDATED: Filter based on user role
 // ============================================
-router.get("/projects", authMiddleware, async (req: express.Request, res: express.Response) => {
-  try {
-    let projectFilter: any = {};
+router.get(
+  "/projects",
+  authMiddleware,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      let projectFilter: any = {};
 
-    if (req.user!.role === "admin") {
-      // Admin sees all projects
-      projectFilter = {};
-    } else {
-      // User sees only assigned projects
-      const TeamMember = require("../models/TeamMember").default;
-      const teamMembers = await TeamMember.find({
-        userId: req.user!.id,
-        status: "active",
-      });
+      if (req.user!.role === "admin") {
+        // Tenant isolation: admin sees only own projects
+        projectFilter = { userId: req.user!.id };
+      } else {
+        // User sees only assigned projects
+        const TeamMember = require("../models/TeamMember").default;
+        const teamMembers = await TeamMember.find({
+          userId: req.user!.id,
+          status: "active",
+        });
 
-      const projectIds = teamMembers.map((tm: any) => tm.projectId);
+        const projectIds = teamMembers.map((tm: any) => tm.projectId);
 
-      if (projectIds.length === 0) {
-        return res.json([]);
+        if (projectIds.length === 0) {
+          return res.json([]);
+        }
+
+        projectFilter._id = { $in: projectIds };
       }
 
-      projectFilter._id = { $in: projectIds };
+      const projects = await Project.find(projectFilter)
+        .select("_id projectName")
+        .sort({ projectName: 1 });
+
+      res.json(projects);
+    } catch (error: any) {
+      res
+        .status(500)
+        .json({ message: "Failed to fetch projects", error: error.message });
     }
-
-    const projects = await Project.find(projectFilter)
-      .select("_id projectName")
-      .sort({ projectName: 1 });
-
-    res.json(projects);
-  } catch (error: any) {
-    res
-      .status(500)
-      .json({ message: "Failed to fetch projects", error: error.message });
-  }
-});
+  },
+);
 
 // ============================================
 // GET /api/documents/folders - Get all document folders
 // ✅ UPDATED: Filter based on user role
 // ============================================
-router.get("/folders", authMiddleware, async (req: express.Request, res: express.Response) => {
-  try {
-    let projectFilter: any = {};
+router.get(
+  "/folders",
+  authMiddleware,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      let projectFilter: any = {};
 
-    if (req.user!.role === "admin") {
-      // Admin sees all projects
-      projectFilter = {};
-    } else {
-      // User sees only assigned projects
-      const TeamMember = require("../models/TeamMember").default;
-      const teamMembers = await TeamMember.find({
-        userId: req.user!.id,
-        status: "active",
-      });
+      if (req.user!.role === "admin") {
+        // Tenant isolation: admin sees only own projects
+        projectFilter = { userId: req.user!.id };
+      } else {
+        // User sees only assigned projects
+        const TeamMember = require("../models/TeamMember").default;
+        const teamMembers = await TeamMember.find({
+          userId: req.user!.id,
+          status: "active",
+        });
 
-      const projectIds = teamMembers.map((tm: any) => tm.projectId);
+        const projectIds = teamMembers.map((tm: any) => tm.projectId);
 
-      if (projectIds.length === 0) {
-        return res.json([]);
+        if (projectIds.length === 0) {
+          return res.json([]);
+        }
+
+        projectFilter._id = { $in: projectIds };
       }
 
-      projectFilter._id = { $in: projectIds };
-    }
+      const projects = await Project.find(projectFilter)
+        .select("projectName")
+        .sort({ projectName: 1 });
 
-    const projects = await Project.find(projectFilter)
-      .select("projectName")
-      .sort({ projectName: 1 });
+      const foldersWithCount = await Promise.all(
+        projects.map(async (project) => {
+          const documentCount = await Document.countDocuments({
+            projectId: project._id,
+          });
+          return {
+            _id: project._id,
+            projectName: project.projectName,
+            documentCount,
+          };
+        }),
+      );
 
-    const foldersWithCount = await Promise.all(
-      projects.map(async (project) => {
-        const documentCount = await Document.countDocuments({
-          projectId: project._id,
-        });
-        return {
-          _id: project._id,
-          projectName: project.projectName,
-          documentCount,
-        };
-      }),
-    );
-
-    res.json(foldersWithCount);
-  } catch (error: any) {
-    res
-      .status(500)
-      .json({
+      res.json(foldersWithCount);
+    } catch (error: any) {
+      res.status(500).json({
         message: "Failed to fetch document folders",
         error: error.message,
       });
-  }
-});
+    }
+  },
+);
 
 // ============================================
 // GET /api/documents/project/:projectId - Get documents by project
@@ -165,7 +171,12 @@ router.get(
     try {
       const { projectId } = req.params;
 
-      // Check project access for users
+      const project = await Project.findById(projectId);
+      if (!project) {
+        return res.status(404).json({ message: "Project not found" });
+      }
+
+      // Check project access for users/admins
       if (req.user!.role !== "admin") {
         const TeamMember = require("../models/TeamMember").default;
         const teamMember = await TeamMember.findOne({
@@ -179,6 +190,10 @@ router.get(
             .status(403)
             .json({ message: "Not authorized to access this project" });
         }
+      } else if (String(project.userId) !== String(req.user!.id)) {
+        return res
+          .status(403)
+          .json({ message: "Not authorized to access this project" });
       }
 
       const documents = await Document.find({ projectId })
@@ -217,7 +232,7 @@ router.post(
       if (!project)
         return res.status(404).json({ message: "Project not found" });
 
-      // Check project access for users
+      // Check project access for users/admins
       if (req.user!.role !== "admin") {
         const TeamMember = require("../models/TeamMember").default;
         const teamMember = await TeamMember.findOne({
@@ -231,6 +246,10 @@ router.post(
             .status(403)
             .json({ message: "Not authorized to upload to this project" });
         }
+      } else if (String(project.userId) !== String(req.user!.id)) {
+        return res
+          .status(403)
+          .json({ message: "Not authorized to upload to this project" });
       }
 
       const userId = req.user?.id;
@@ -261,12 +280,10 @@ router.post(
         .populate("uploadedBy", "name email")
         .populate("projectId", "projectName");
 
-      res
-        .status(201)
-        .json({
-          message: "Document uploaded successfully",
-          document: populatedDocument,
-        });
+      res.status(201).json({
+        message: "Document uploaded successfully",
+        document: populatedDocument,
+      });
     } catch (error: any) {
       res
         .status(500)
@@ -279,97 +296,105 @@ router.post(
 // DELETE /api/documents/:id - Delete document
 // ✅ UPDATED: Check project access for users
 // ============================================
-router.delete("/:id", authMiddleware, async (req: express.Request, res: express.Response) => {
-  try {
-    const { id } = req.params;
+router.delete(
+  "/:id",
+  authMiddleware,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { id } = req.params;
 
-    const document = await Document.findById(id);
-    if (!document)
-      return res.status(404).json({ message: "Document not found" });
+      const document = await Document.findById(id);
+      if (!document)
+        return res.status(404).json({ message: "Document not found" });
 
-    // Check project access for users
-    if (req.user!.role !== "admin") {
-      const TeamMember = require("../models/TeamMember").default;
-      const teamMember = await TeamMember.findOne({
-        userId: req.user!.id,
-        projectId: document.projectId,
-        status: "active",
-      });
+      // Check project access for users
+      if (req.user!.role !== "admin") {
+        const TeamMember = require("../models/TeamMember").default;
+        const teamMember = await TeamMember.findOne({
+          userId: req.user!.id,
+          projectId: document.projectId,
+          status: "active",
+        });
 
-      if (!teamMember) {
-        return res
-          .status(403)
-          .json({ message: "Not authorized to delete this document" });
+        if (!teamMember) {
+          return res
+            .status(403)
+            .json({ message: "Not authorized to delete this document" });
+        }
       }
+
+      if (document.cloudinaryPublicId) {
+        await cloudinary.uploader.destroy(document.cloudinaryPublicId, {
+          resource_type: "raw",
+        });
+      }
+
+      await Document.findByIdAndDelete(id);
+
+      res.json({ message: "Document deleted successfully" });
+    } catch (error: any) {
+      res
+        .status(500)
+        .json({ message: "Failed to delete document", error: error.message });
     }
-
-    if (document.cloudinaryPublicId) {
-      await cloudinary.uploader.destroy(document.cloudinaryPublicId, {
-        resource_type: "raw",
-      });
-    }
-
-    await Document.findByIdAndDelete(id);
-
-    res.json({ message: "Document deleted successfully" });
-  } catch (error: any) {
-    res
-      .status(500)
-      .json({ message: "Failed to delete document", error: error.message });
-  }
-});
+  },
+);
 
 // ============================================
 // GET /api/documents/stats/overview - Document statistics
 // ✅ UPDATED: Filter based on user role
 // ============================================
-router.get("/stats/overview", authMiddleware, async (req: express.Request, res: express.Response) => {
-  try {
-    let projectFilter: any = {};
+router.get(
+  "/stats/overview",
+  authMiddleware,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      let projectFilter: any = {};
 
-    if (req.user!.role === "admin") {
-      // Admin sees all
-      projectFilter = {};
-    } else {
-      // User sees only assigned projects
-      const TeamMember = require("../models/TeamMember").default;
-      const teamMembers = await TeamMember.find({
-        userId: req.user!.id,
-        status: "active",
-      });
-
-      const projectIds = teamMembers.map((tm: any) => tm.projectId);
-
-      if (projectIds.length === 0) {
-        return res.json({
-          totalDocuments: 0,
-          totalProjects: 0,
-          totalSize: 0,
+      if (req.user!.role === "admin") {
+        // Tenant isolation: admin sees only own projects
+        projectFilter = { userId: req.user!.id };
+      } else {
+        // User sees only assigned projects
+        const TeamMember = require("../models/TeamMember").default;
+        const teamMembers = await TeamMember.find({
+          userId: req.user!.id,
+          status: "active",
         });
+
+        const projectIds = teamMembers.map((tm: any) => tm.projectId);
+
+        if (projectIds.length === 0) {
+          return res.json({
+            totalDocuments: 0,
+            totalProjects: 0,
+            totalSize: 0,
+          });
+        }
+
+        projectFilter._id = { $in: projectIds };
       }
 
-      projectFilter._id = { $in: projectIds };
+      const projects = await Project.find(projectFilter);
+      const projectIds = projects.map((p) => p._id);
+
+      const totalDocuments = await Document.countDocuments({
+        projectId: { $in: projectIds },
+      });
+      const totalProjects = projects.length;
+
+      const documents = await Document.find({
+        projectId: { $in: projectIds },
+      });
+      const totalSize = documents.reduce((sum, doc) => sum + doc.fileSize, 0);
+
+      res.json({ totalDocuments, totalProjects, totalSize });
+    } catch (error: any) {
+      res
+        .status(500)
+        .json({ message: "Failed to fetch statistics", error: error.message });
     }
-
-    const projects = await Project.find(projectFilter);
-    const projectIds = projects.map((p) => p._id);
-
-    const totalDocuments = await Document.countDocuments({
-      projectId: { $in: projectIds },
-    });
-    const totalProjects = projects.length;
-
-    const documents = await Document.find({
-      projectId: { $in: projectIds },
-    });
-    const totalSize = documents.reduce((sum, doc) => sum + doc.fileSize, 0);
-
-    res.json({ totalDocuments, totalProjects, totalSize });
-  } catch (error: any) {
-    res
-      .status(500)
-      .json({ message: "Failed to fetch statistics", error: error.message });
-  }
-});
+  },
+);
 
 export default router;

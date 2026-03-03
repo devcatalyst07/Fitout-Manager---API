@@ -1,4 +1,4 @@
-import express from 'express';
+import express from "express";
 import { authMiddleware } from "../middleware/auth";
 import {
   requirePermission,
@@ -37,12 +37,10 @@ router.get(
       res.json(teamMembers);
     } catch (error: any) {
       console.error("Get team members error:", error);
-      res
-        .status(500)
-        .json({
-          message: "Failed to fetch team members",
-          error: error.message,
-        });
+      res.status(500).json({
+        message: "Failed to fetch team members",
+        error: error.message,
+      });
     }
   },
 );
@@ -51,6 +49,7 @@ router.get(
 router.post(
   "/:projectId/team",
   authMiddleware,
+  requireProjectAccess,
   requirePermission("projects-team-add"),
   async (req: express.Request, res: express.Response) => {
     try {
@@ -133,18 +132,19 @@ router.post(
 router.put(
   "/:projectId/team/:memberId",
   authMiddleware,
+  requireProjectAccess,
   requirePermission("projects-team-edit"),
   async (req: express.Request, res: express.Response) => {
     try {
-      const { memberId } = req.params;
+      const { projectId, memberId } = req.params;
       const { roleId, status } = req.body;
 
       const updateData: any = {};
       if (roleId) updateData.roleId = roleId;
       if (status) updateData.status = status;
 
-      const updatedMember = await TeamMember.findByIdAndUpdate(
-        memberId,
+      const updatedMember = await TeamMember.findOneAndUpdate(
+        { _id: memberId, projectId },
         updateData,
         { new: true, runValidators: true },
       )
@@ -174,13 +174,14 @@ router.put(
 router.delete(
   "/:projectId/team/:memberId",
   authMiddleware,
+  requireProjectAccess,
   requirePermission("projects-team-delete"),
   async (req: express.Request, res: express.Response) => {
     try {
-      const { memberId } = req.params;
+      const { projectId, memberId } = req.params;
 
-      const updatedMember = await TeamMember.findByIdAndUpdate(
-        memberId,
+      const updatedMember = await TeamMember.findOneAndUpdate(
+        { _id: memberId, projectId },
         { status: "removed" },
         { new: true },
       );

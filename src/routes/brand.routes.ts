@@ -1,263 +1,374 @@
-import express from 'express';
+import express from "express";
 import { authMiddleware } from "../middleware/auth";
-import { requireAdmin as adminOnly } from '../middleware/permissions';
+import { requireAdmin as adminOnly } from "../middleware/permissions";
 import Brand from "../models/Brand";
 import Project from "../models/Projects";
 import Task from "../models/Task";
+import TeamMember from "../models/TeamMember";
 
 const router = express.Router();
 
 // GET all brands
-router.get("/", authMiddleware, async (req: express.Request, res: express.Response) => {
-  try {
-    const brands = await Brand.find({ isActive: true })
-      .populate("createdBy", "name email")
-      .sort({ createdAt: -1 });
+router.get(
+  "/",
+  authMiddleware,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      let brands: any[] = [];
 
-    res.json(brands);
-  } catch (error) {
-    console.error("Get brands error:", error);
-    res.status(500).json({ message: "Failed to fetch brands" });
-  }
-});
+      if (req.user!.role === "admin") {
+        brands = await Brand.find({ isActive: true, createdBy: req.user!.id })
+          .populate("createdBy", "name email")
+          .sort({ createdAt: -1 });
+      } else {
+        const teamMemberships = await TeamMember.find({
+          userId: req.user!.id,
+          status: "active",
+        }).populate("projectId", "brand");
+
+        const visibleBrandNames = [
+          ...new Set(
+            teamMemberships
+              .map((tm: any) => tm.projectId?.brand)
+              .filter(Boolean),
+          ),
+        ];
+
+        if (visibleBrandNames.length > 0) {
+          brands = await Brand.find({
+            isActive: true,
+            name: { $in: visibleBrandNames },
+          })
+            .populate("createdBy", "name email")
+            .sort({ createdAt: -1 });
+        }
+      }
+
+      res.json(brands);
+    } catch (error) {
+      console.error("Get brands error:", error);
+      res.status(500).json({ message: "Failed to fetch brands" });
+    }
+  },
+);
 
 // GET all brands (including inactive - admin only)
-router.get("/all", authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
-  try {
-    const brands = await Brand.find()
-      .populate("createdBy", "name email")
-      .sort({ createdAt: -1 });
+router.get(
+  "/all",
+  authMiddleware,
+  adminOnly,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const brands = await Brand.find({ createdBy: req.user!.id })
+        .populate("createdBy", "name email")
+        .sort({ createdAt: -1 });
 
-    res.json(brands);
-  } catch (error) {
-    console.error("Get all brands error:", error);
-    res.status(500).json({ message: "Failed to fetch brands" });
-  }
-});
+      res.json(brands);
+    } catch (error) {
+      console.error("Get all brands error:", error);
+      res.status(500).json({ message: "Failed to fetch brands" });
+    }
+  },
+);
 
 // GET brand dashboard data WITH REAL DATA
-router.get("/:id/dashboard", authMiddleware, async (req: express.Request, res: express.Response) => {
-  try {
-    const { id } = req.params;
+router.get(
+  "/:id/dashboard",
+  authMiddleware,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { id } = req.params;
 
-    const brand = await Brand.findById(id).populate("createdBy", "name email");
+      const brand = await Brand.findById(id).populate(
+        "createdBy",
+        "name email",
+      );
 
-    if (!brand) {
-      return res.status(404).json({ message: "Brand not found" });
+      if (!brand) {
+        return res.status(404).json({ message: "Brand not found" });
+      }
+
+      if (
+        req.user!.role === "admin" &&
+        String((brand as any).createdBy?._id || brand.createdBy) !==
+          String(req.user!.id)
+      ) {
+        return res
+          .status(403)
+          .json({ message: "Not authorized to access this brand" });
+      }
+
+      // Get all projects for this brand
+      const projectFilter: any = { brand: brand.name };
+      if (req.user!.role === "admin") {
+        projectFilter.userId = req.user!.id;
+      }
+
+      const projects = await Project.find(projectFilter)
+        .populate("userId", "name email")
+        .sort({ createdAt: -1 });
+
+      // For each project, calculate completion based on tasks
+      const projectsWithData = await Promise.all(
+        projects.map(async (project) => {
+          // Get all tasks for this project
+          const tasks = await Task.find({ projectId: project._id });
+
+          // Calculate task-based completion
+          let completionPercent = 0;
+          let completedTaskCount = 0;
+
+          if (tasks.length > 0) {
+            // Count tasks that are "Done"
+            completedTaskCount = tasks.filter(
+              (t) => t.status === "Done",
+            ).length;
+
+            // Calculate average progress of all tasks
+            const totalProgress = tasks.reduce(
+              (sum, task) => sum + (task.progress || 0),
+              0,
+            );
+            completionPercent = Math.round(totalProgress / tasks.length);
+          }
+
+          // Determine if project is completed: ALL tasks must be "Done"
+          const isCompleted =
+            tasks.length > 0 && completedTaskCount === tasks.length;
+
+          return {
+            _id: project._id,
+            projectName: project.projectName,
+            status: isCompleted ? "Completed" : project.status,
+            isCompleted,
+            budget: project.budget || 0,
+            spent: project.spent || 0,
+            completionPercent,
+            taskCount: tasks.length,
+            completedTaskCount,
+            createdAt: project.createdAt,
+            updatedAt: project.updatedAt,
+          };
+        }),
+      );
+
+      res.json({
+        brand: {
+          _id: brand._id,
+          name: brand.name,
+          description: brand.description,
+          isActive: brand.isActive,
+          createdBy: brand.createdBy,
+          createdAt: brand.createdAt,
+          updatedAt: brand.updatedAt,
+        },
+        projects: projectsWithData,
+      });
+    } catch (error) {
+      console.error("Dashboard fetch error:", error);
+      res.status(500).json({ message: "Failed to load dashboard data" });
     }
-
-    // Get all projects for this brand
-    const projects = await Project.find({ brand: brand.name })
-      .populate("userId", "name email")
-      .sort({ createdAt: -1 });
-
-    // For each project, calculate completion based on tasks
-    const projectsWithData = await Promise.all(
-      projects.map(async (project) => {
-        // Get all tasks for this project
-        const tasks = await Task.find({ projectId: project._id });
-
-        // Calculate task-based completion
-        let completionPercent = 0;
-        let completedTaskCount = 0;
-
-        if (tasks.length > 0) {
-          // Count tasks that are "Done"
-          completedTaskCount = tasks.filter((t) => t.status === "Done").length;
-
-          // Calculate average progress of all tasks
-          const totalProgress = tasks.reduce(
-            (sum, task) => sum + (task.progress || 0),
-            0,
-          );
-          completionPercent = Math.round(totalProgress / tasks.length);
-        }
-
-        // Determine if project is completed: ALL tasks must be "Done"
-        const isCompleted =
-          tasks.length > 0 && completedTaskCount === tasks.length;
-
-        return {
-          _id: project._id,
-          projectName: project.projectName,
-          status: isCompleted ? "Completed" : project.status,
-          isCompleted,
-          budget: project.budget || 0,
-          spent: project.spent || 0,
-          completionPercent,
-          taskCount: tasks.length,
-          completedTaskCount,
-          createdAt: project.createdAt,
-          updatedAt: project.updatedAt,
-        };
-      }),
-    );
-
-    res.json({
-      brand: {
-        _id: brand._id,
-        name: brand.name,
-        description: brand.description,
-        isActive: brand.isActive,
-        createdBy: brand.createdBy,
-        createdAt: brand.createdAt,
-        updatedAt: brand.updatedAt,
-      },
-      projects: projectsWithData,
-    });
-  } catch (error) {
-    console.error("Dashboard fetch error:", error);
-    res.status(500).json({ message: "Failed to load dashboard data" });
-  }
-});
+  },
+);
 
 // GET brand team members
-router.get("/:id/team", authMiddleware, async (req: express.Request, res: express.Response) => {
-  try {
-    const { id } = req.params;
+router.get(
+  "/:id/team",
+  authMiddleware,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { id } = req.params;
 
-    const brand = await Brand.findById(id);
-    if (!brand) {
-      return res.status(404).json({ message: "Brand not found" });
+      const brand = await Brand.findById(id);
+      if (!brand) {
+        return res.status(404).json({ message: "Brand not found" });
+      }
+
+      if (
+        req.user!.role === "admin" &&
+        String(brand.createdBy) !== String(req.user!.id)
+      ) {
+        return res
+          .status(403)
+          .json({ message: "Not authorized to access this brand" });
+      }
+
+      const teamMembers = brand.teamMembers || [];
+      res.json(teamMembers);
+    } catch (error) {
+      console.error("Get brand team error:", error);
+      res.status(500).json({ message: "Failed to fetch team members" });
     }
-
-    const teamMembers = brand.teamMembers || [];
-    res.json(teamMembers);
-  } catch (error) {
-    console.error("Get brand team error:", error);
-    res.status(500).json({ message: "Failed to fetch team members" });
-  }
-});
+  },
+);
 
 // ADD team member to brand
-router.post("/:id/team", authMiddleware, async (req: express.Request, res: express.Response) => {
-  try {
-    const { id } = req.params;
-    const { name, email } = req.body;
+router.post(
+  "/:id/team",
+  authMiddleware,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { id } = req.params;
+      const { name, email } = req.body;
 
-    if (!email) {
-      return res.status(400).json({ message: "Email is required" });
+      if (!email) {
+        return res.status(400).json({ message: "Email is required" });
+      }
+
+      const brand = await Brand.findById(id);
+      if (!brand) {
+        return res.status(404).json({ message: "Brand not found" });
+      }
+
+      if (
+        req.user!.role === "admin" &&
+        String(brand.createdBy) !== String(req.user!.id)
+      ) {
+        return res
+          .status(403)
+          .json({ message: "Not authorized to modify this brand" });
+      }
+
+      const teamMembers = brand.teamMembers || [];
+      const exists = teamMembers.some((member: any) => member.email === email);
+
+      if (exists) {
+        return res.status(400).json({ message: "User already in team" });
+      }
+
+      const newMember = {
+        _id: new Date().getTime().toString(),
+        name,
+        email,
+      };
+
+      teamMembers.push(newMember);
+      brand.teamMembers = teamMembers;
+      await brand.save();
+
+      res.status(201).json({
+        message: "Team member added successfully",
+        member: newMember,
+      });
+    } catch (error) {
+      console.error("Add team member error:", error);
+      res.status(500).json({ message: "Failed to add team member" });
     }
-
-    const brand = await Brand.findById(id);
-    if (!brand) {
-      return res.status(404).json({ message: "Brand not found" });
-    }
-
-    const teamMembers = brand.teamMembers || [];
-    const exists = teamMembers.some((member: any) => member.email === email);
-
-    if (exists) {
-      return res.status(400).json({ message: "User already in team" });
-    }
-
-    const newMember = {
-      _id: new Date().getTime().toString(),
-      name,
-      email,
-    };
-
-    teamMembers.push(newMember);
-    brand.teamMembers = teamMembers;
-    await brand.save();
-
-    res.status(201).json({
-      message: "Team member added successfully",
-      member: newMember,
-    });
-  } catch (error) {
-    console.error("Add team member error:", error);
-    res.status(500).json({ message: "Failed to add team member" });
-  }
-});
+  },
+);
 
 // CREATE new brand (Admin only)
-router.post("/", authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
-  try {
-    const { name, description } = req.body;
+router.post(
+  "/",
+  authMiddleware,
+  adminOnly,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { name, description } = req.body;
 
-    if (!name) {
-      return res.status(400).json({ message: "Brand name is required" });
+      if (!name) {
+        return res.status(400).json({ message: "Brand name is required" });
+      }
+
+      const existingBrand = await Brand.findOne({
+        name,
+        createdBy: req.user!.id,
+      });
+      if (existingBrand) {
+        return res.status(400).json({ message: "Brand already exists" });
+      }
+
+      const newBrand = await Brand.create({
+        name,
+        description,
+        createdBy: req.user!.id,
+        teamMembers: [],
+      });
+
+      const populatedBrand = await Brand.findById(newBrand._id).populate(
+        "createdBy",
+        "name email",
+      );
+
+      res.status(201).json({
+        message: "Brand created successfully",
+        brand: populatedBrand,
+      });
+    } catch (error) {
+      console.error("Create brand error:", error);
+      res.status(500).json({ message: "Failed to create brand" });
     }
-
-    const existingBrand = await Brand.findOne({ name });
-    if (existingBrand) {
-      return res.status(400).json({ message: "Brand already exists" });
-    }
-
-    const newBrand = await Brand.create({
-      name,
-      description,
-      createdBy: req.user!.id,
-      teamMembers: [],
-    });
-
-    const populatedBrand = await Brand.findById(newBrand._id).populate(
-      "createdBy",
-      "name email",
-    );
-
-    res.status(201).json({
-      message: "Brand created successfully",
-      brand: populatedBrand,
-    });
-  } catch (error) {
-    console.error("Create brand error:", error);
-    res.status(500).json({ message: "Failed to create brand" });
-  }
-});
+  },
+);
 
 // UPDATE brand (Admin only)
-router.put("/:id", authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
-  try {
-    const { id } = req.params;
-    const { name, description, isActive } = req.body;
+router.put(
+  "/:id",
+  authMiddleware,
+  adminOnly,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { id } = req.params;
+      const { name, description, isActive } = req.body;
 
-    if (!name) {
-      return res.status(400).json({ message: "Brand name is required" });
+      if (!name) {
+        return res.status(400).json({ message: "Brand name is required" });
+      }
+
+      const existingBrand = await Brand.findOne({
+        name,
+        createdBy: req.user!.id,
+        _id: { $ne: id },
+      });
+      if (existingBrand) {
+        return res.status(400).json({ message: "Brand name already exists" });
+      }
+
+      const updatedBrand = await Brand.findOneAndUpdate(
+        { _id: id, createdBy: req.user!.id },
+        { name, description, isActive },
+        { new: true, runValidators: true },
+      ).populate("createdBy", "name email");
+
+      if (!updatedBrand) {
+        return res.status(404).json({ message: "Brand not found" });
+      }
+
+      res.json({
+        message: "Brand updated successfully",
+        brand: updatedBrand,
+      });
+    } catch (error) {
+      console.error("Update brand error:", error);
+      res.status(500).json({ message: "Failed to update brand" });
     }
-
-    const existingBrand = await Brand.findOne({ name, _id: { $ne: id } });
-    if (existingBrand) {
-      return res.status(400).json({ message: "Brand name already exists" });
-    }
-
-    const updatedBrand = await Brand.findByIdAndUpdate(
-      id,
-      { name, description, isActive },
-      { new: true, runValidators: true },
-    ).populate("createdBy", "name email");
-
-    if (!updatedBrand) {
-      return res.status(404).json({ message: "Brand not found" });
-    }
-
-    res.json({
-      message: "Brand updated successfully",
-      brand: updatedBrand,
-    });
-  } catch (error) {
-    console.error("Update brand error:", error);
-    res.status(500).json({ message: "Failed to update brand" });
-  }
-});
+  },
+);
 
 // DELETE brand (Admin only)
-router.delete("/:id", authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
-  try {
-    const { id } = req.params;
+router.delete(
+  "/:id",
+  authMiddleware,
+  adminOnly,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { id } = req.params;
 
-    const deletedBrand = await Brand.findByIdAndDelete(id);
+      const deletedBrand = await Brand.findOneAndDelete({
+        _id: id,
+        createdBy: req.user!.id,
+      });
 
-    if (!deletedBrand) {
-      return res.status(404).json({ message: "Brand not found" });
+      if (!deletedBrand) {
+        return res.status(404).json({ message: "Brand not found" });
+      }
+
+      res.json({ message: "Brand deleted successfully" });
+    } catch (error) {
+      console.error("Delete brand error:", error);
+      res.status(500).json({ message: "Failed to delete brand" });
     }
-
-    res.json({ message: "Brand deleted successfully" });
-  } catch (error) {
-    console.error("Delete brand error:", error);
-    res.status(500).json({ message: "Failed to delete brand" });
-  }
-});
+  },
+);
 
 export default router;

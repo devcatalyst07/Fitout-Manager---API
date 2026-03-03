@@ -40,7 +40,8 @@ const sendRoleAssignedEmail = async (
   });
 
   await transporter.sendMail({
-    from: process.env.EMAIL_FROM || '"Fitout Manager" <noreply@fitoutmanager.com>',
+    from:
+      process.env.EMAIL_FROM || '"Fitout Manager" <noreply@fitoutmanager.com>',
     to: targetEmail,
     subject: "Your role has been assigned",
     html: `
@@ -88,8 +89,8 @@ router.get(
         count,
       }));
 
-      // Get project statistics
-      const allProjects = await Project.find();
+      // Get project statistics (tenant isolation: admin sees own projects only)
+      const allProjects = await Project.find({ userId: req.user!.id });
 
       const totalProjects = allProjects.length;
       const activeProjects = allProjects.filter(
@@ -118,9 +119,11 @@ router.get(
       const lastMonth = new Date();
       lastMonth.setMonth(lastMonth.getMonth() - 1);
       const projectsLastMonth = await Project.countDocuments({
+        userId: req.user!.id,
         createdAt: { $lt: lastMonth },
       });
       const projectsThisMonth = await Project.countDocuments({
+        userId: req.user!.id,
         createdAt: { $gte: lastMonth },
       });
 
@@ -128,6 +131,7 @@ router.get(
       const lastWeek = new Date();
       lastWeek.setDate(lastWeek.getDate() - 7);
       const activeLastWeek = await Project.countDocuments({
+        userId: req.user!.id,
         status: "In Progress",
         updatedAt: { $lt: lastWeek },
       });
@@ -194,40 +198,6 @@ router.get(
     } catch (error) {
       console.error("Get users error:", error);
       res.status(500).json({ message: "Failed to fetch users" });
-    }
-  },
-);
-
-// Delete a user account (admin only)
-router.delete(
-  "/users/:userId",
-  authMiddleware,
-  adminOnly,
-  async (req: express.Request, res: express.Response) => {
-    try {
-      const { userId } = req.params;
-
-      if (!userId) {
-        return res.status(400).json({ message: "User ID is required" });
-      }
-
-      const user = await User.findById(userId);
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
-
-      if (user.role === "admin") {
-        return res.status(400).json({ message: "Cannot delete admin user" });
-      }
-
-      await Notification.deleteMany({ recipientId: user._id });
-      await User.findByIdAndDelete(userId);
-      await invalidateUserCache(userId);
-
-      res.json({ message: "User deleted successfully" });
-    } catch (error) {
-      console.error("Delete user error:", error);
-      res.status(500).json({ message: "Failed to delete user" });
     }
   },
 );

@@ -1,4 +1,4 @@
-import express from 'express';
+import express from "express";
 import { authMiddleware } from "../middleware/auth";
 import {
   requirePermission,
@@ -14,119 +14,159 @@ import mongoose from "mongoose";
 const router = express.Router();
 
 // GET /api/tasks/dashboard - Get all tasks for dashboard widget
-router.get('/dashboard', authMiddleware, async (req: express.Request, res: express.Response) => {
-  try {
-    console.log('Dashboard Tasks API called');
+router.get(
+  "/dashboard",
+  authMiddleware,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      console.log("Dashboard Tasks API called");
 
-    // Fetch all project tasks (isTemplate = false)
-    const tasks = await Task.find({ isTemplate: false })
-      .populate('projectId', 'brand projectName')
-      .sort({ dueDate: 1 }) // Sort by due date ascending
-      .lean();
+      let projectIds: any[] = [];
 
-    // Filter out tasks without project (shouldn't happen, but safety check)
-    const validTasks = tasks.filter(task => task.projectId);
-
-    // Group tasks by brand
-    const tasksByBrand: Record<string, any[]> = {};
-    const now = new Date();
-
-    validTasks.forEach(task => {
-      const brand = (task.projectId as any).brand;
-      const projectName = (task.projectId as any).projectName;
-      const dueDate = task.dueDate ? new Date(task.dueDate) : null;
-
-      // Determine task category
-      let category: 'upcoming' | 'overdue' | 'completed';
-      
-      if (task.status === 'Done') {
-        category = 'completed';
-      } else if (dueDate && dueDate < now) {
-        category = 'overdue';
+      if (req.user!.role === "admin") {
+        const ownedProjects = await Project.find({
+          userId: req.user!.id,
+        }).select("_id");
+        projectIds = ownedProjects.map((p) => p._id);
       } else {
-        category = 'upcoming';
+        const TeamMember = require("../models/TeamMember").default;
+        const teamMembers = await TeamMember.find({
+          userId: req.user!.id,
+          status: "active",
+        }).select("projectId");
+        projectIds = teamMembers.map((tm: any) => tm.projectId);
       }
 
-      // Format task data
-      const formattedTask = {
-        _id: task._id,
-        title: task.title,
-        description: task.description,
-        status: task.status,
-        priority: task.priority,
-        dueDate: task.dueDate,
-        progress: task.progress,
-        assignees: task.assignees,
-        brand,
-        projectName,
-        projectId: (task.projectId as any)._id,
-        category,
-        createdAt: task.createdAt,
-        updatedAt: task.updatedAt,
-      };
-
-      // Group by brand
-      if (!tasksByBrand[brand]) {
-        tasksByBrand[brand] = [];
+      if (projectIds.length === 0) {
+        return res.json({
+          tasks: [],
+          tasksByBrand: {},
+          brands: [],
+          summary: {
+            total: 0,
+            upcoming: 0,
+            overdue: 0,
+            completed: 0,
+          },
+        });
       }
-      tasksByBrand[brand].push(formattedTask);
-    });
 
-    // Get list of unique brands
-    const brands = Object.keys(tasksByBrand).sort();
+      // Fetch all project tasks (isTemplate = false)
+      const tasks = await Task.find({
+        isTemplate: false,
+        projectId: { $in: projectIds },
+      })
+        .populate("projectId", "brand projectName")
+        .sort({ dueDate: 1 }) // Sort by due date ascending
+        .lean();
 
-    // Calculate counts
-    const totalTasks = validTasks.length;
-    const upcomingCount = validTasks.filter(t => {
-      const dueDate = t.dueDate ? new Date(t.dueDate) : null;
-      return t.status !== 'Done' && (!dueDate || dueDate >= now);
-    }).length;
-    const overdueCount = validTasks.filter(t => {
-      const dueDate = t.dueDate ? new Date(t.dueDate) : null;
-      return t.status !== 'Done' && dueDate && dueDate < now;
-    }).length;
-    const completedCount = validTasks.filter(t => t.status === 'Done').length;
+      // Filter out tasks without project (shouldn't happen, but safety check)
+      const validTasks = tasks.filter((task) => task.projectId);
 
-    console.log(`Found ${totalTasks} tasks across ${brands.length} brands`);
+      // Group tasks by brand
+      const tasksByBrand: Record<string, any[]> = {};
+      const now = new Date();
 
-    res.json({
-      tasks: validTasks.map(task => ({
-        _id: task._id,
-        title: task.title,
-        description: task.description,
-        status: task.status,
-        priority: task.priority,
-        dueDate: task.dueDate,
-        progress: task.progress,
-        assignees: task.assignees,
-        brand: (task.projectId as any).brand,
-        projectName: (task.projectId as any).projectName,
-        projectId: (task.projectId as any)._id,
-        category: task.status === 'Done' 
-          ? 'completed' 
-          : (task.dueDate && new Date(task.dueDate) < now) 
-            ? 'overdue' 
-            : 'upcoming',
-        createdAt: task.createdAt,
-        updatedAt: task.updatedAt,
-      })),
-      tasksByBrand,
-      brands,
-      summary: {
-        total: totalTasks,
-        upcoming: upcomingCount,
-        overdue: overdueCount,
-        completed: completedCount,
-      }
-    });
-  } catch (error: any) {
-    console.error('Dashboard tasks error:', error);
-    res.status(500).json({ 
-      message: 'Failed to fetch dashboard tasks',
-      error: error.message 
-    });
-  }
-});
+      validTasks.forEach((task) => {
+        const brand = (task.projectId as any).brand;
+        const projectName = (task.projectId as any).projectName;
+        const dueDate = task.dueDate ? new Date(task.dueDate) : null;
+
+        // Determine task category
+        let category: "upcoming" | "overdue" | "completed";
+
+        if (task.status === "Done") {
+          category = "completed";
+        } else if (dueDate && dueDate < now) {
+          category = "overdue";
+        } else {
+          category = "upcoming";
+        }
+
+        // Format task data
+        const formattedTask = {
+          _id: task._id,
+          title: task.title,
+          description: task.description,
+          status: task.status,
+          priority: task.priority,
+          dueDate: task.dueDate,
+          progress: task.progress,
+          assignees: task.assignees,
+          brand,
+          projectName,
+          projectId: (task.projectId as any)._id,
+          category,
+          createdAt: task.createdAt,
+          updatedAt: task.updatedAt,
+        };
+
+        // Group by brand
+        if (!tasksByBrand[brand]) {
+          tasksByBrand[brand] = [];
+        }
+        tasksByBrand[brand].push(formattedTask);
+      });
+
+      // Get list of unique brands
+      const brands = Object.keys(tasksByBrand).sort();
+
+      // Calculate counts
+      const totalTasks = validTasks.length;
+      const upcomingCount = validTasks.filter((t) => {
+        const dueDate = t.dueDate ? new Date(t.dueDate) : null;
+        return t.status !== "Done" && (!dueDate || dueDate >= now);
+      }).length;
+      const overdueCount = validTasks.filter((t) => {
+        const dueDate = t.dueDate ? new Date(t.dueDate) : null;
+        return t.status !== "Done" && dueDate && dueDate < now;
+      }).length;
+      const completedCount = validTasks.filter(
+        (t) => t.status === "Done",
+      ).length;
+
+      console.log(`Found ${totalTasks} tasks across ${brands.length} brands`);
+
+      res.json({
+        tasks: validTasks.map((task) => ({
+          _id: task._id,
+          title: task.title,
+          description: task.description,
+          status: task.status,
+          priority: task.priority,
+          dueDate: task.dueDate,
+          progress: task.progress,
+          assignees: task.assignees,
+          brand: (task.projectId as any).brand,
+          projectName: (task.projectId as any).projectName,
+          projectId: (task.projectId as any)._id,
+          category:
+            task.status === "Done"
+              ? "completed"
+              : task.dueDate && new Date(task.dueDate) < now
+                ? "overdue"
+                : "upcoming",
+          createdAt: task.createdAt,
+          updatedAt: task.updatedAt,
+        })),
+        tasksByBrand,
+        brands,
+        summary: {
+          total: totalTasks,
+          upcoming: upcomingCount,
+          overdue: overdueCount,
+          completed: completedCount,
+        },
+      });
+    } catch (error: any) {
+      console.error("Dashboard tasks error:", error);
+      res.status(500).json({
+        message: "Failed to fetch dashboard tasks",
+        error: error.message,
+      });
+    }
+  },
+);
 
 // ==================== PROJECT TASK ROUTES ====================
 
@@ -167,7 +207,8 @@ router.get(
           color: phase.color,
         },
         tasks: allTasks.filter(
-          (task) => task.phaseId && task.phaseId.toString() === phase._id.toString()
+          (task) =>
+            task.phaseId && task.phaseId.toString() === phase._id.toString(),
         ),
       }));
 
@@ -185,7 +226,7 @@ router.get(
         .status(500)
         .json({ message: "Failed to fetch tasks", error: error.message });
     }
-  }
+  },
 );
 
 // GET single task
@@ -216,7 +257,7 @@ router.get(
         .status(500)
         .json({ message: "Failed to fetch task", error: error.message });
     }
-  }
+  },
 );
 
 // GET task statistics
@@ -269,7 +310,7 @@ router.get(
         error: error.message,
       });
     }
-  }
+  },
 );
 
 // CREATE new task
@@ -370,7 +411,7 @@ router.post(
         .status(500)
         .json({ message: "Failed to create task", error: error.message });
     }
-  }
+  },
 );
 
 // UPDATE task
@@ -392,7 +433,10 @@ router.put(
       }
 
       // If updating phaseId, verify it belongs to same project
-      if (updateData.phaseId && updateData.phaseId !== oldTask.phaseId?.toString()) {
+      if (
+        updateData.phaseId &&
+        updateData.phaseId !== oldTask.phaseId?.toString()
+      ) {
         const phase = await Phase.findOne({
           _id: updateData.phaseId,
           projectId: oldTask.projectId,
@@ -474,7 +518,7 @@ router.put(
           req.user!.id,
           req.user!.name || "User",
           updatedTask.title,
-          taskId
+          taskId,
         );
       }
 
@@ -488,7 +532,7 @@ router.put(
         .status(500)
         .json({ message: "Failed to update task", error: error.message });
     }
-  }
+  },
 );
 
 // DELETE task
@@ -516,27 +560,34 @@ router.delete(
         .status(500)
         .json({ message: "Failed to delete task", error: error.message });
     }
-  }
+  },
 );
 
 // ==================== PROJECT PHASE ROUTES ====================
 
 // GET all phases for a project
-router.get("/:projectId/phases", authMiddleware, requireProjectAccess, async (req: express.Request, res: express.Response) => {
-  try {
-    const { projectId } = req.params;
+router.get(
+  "/:projectId/phases",
+  authMiddleware,
+  requireProjectAccess,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { projectId } = req.params;
 
-    const phases = await Phase.find({
-      projectId,
-      isTemplate: false,
-    }).sort({ order: 1 });
+      const phases = await Phase.find({
+        projectId,
+        isTemplate: false,
+      }).sort({ order: 1 });
 
-    res.json(phases);
-  } catch (error: any) {
-    console.error("Get phases error:", error);
-    res.status(500).json({ message: "Failed to fetch phases", error: error.message });
-  }
-});
+      res.json(phases);
+    } catch (error: any) {
+      console.error("Get phases error:", error);
+      res
+        .status(500)
+        .json({ message: "Failed to fetch phases", error: error.message });
+    }
+  },
+);
 
 // CREATE phase for a project
 router.post(
@@ -588,9 +639,11 @@ router.post(
       });
     } catch (error: any) {
       console.error("Create phase error:", error);
-      res.status(500).json({ message: "Failed to create phase", error: error.message });
+      res
+        .status(500)
+        .json({ message: "Failed to create phase", error: error.message });
     }
-  }
+  },
 );
 
 // UPDATE phase
@@ -616,7 +669,7 @@ router.put(
       const updatedPhase = await Phase.findByIdAndUpdate(
         phaseId,
         { name, description, order, color },
-        { new: true, runValidators: true }
+        { new: true, runValidators: true },
       );
 
       res.json({
@@ -625,9 +678,11 @@ router.put(
       });
     } catch (error: any) {
       console.error("Update phase error:", error);
-      res.status(500).json({ message: "Failed to update phase", error: error.message });
+      res
+        .status(500)
+        .json({ message: "Failed to update phase", error: error.message });
     }
-  }
+  },
 );
 
 // DELETE phase
@@ -652,7 +707,7 @@ router.delete(
       // Update all tasks in this phase to have no phase
       await Task.updateMany(
         { phaseId, projectId, isTemplate: false },
-        { $set: { phaseId: null } }
+        { $set: { phaseId: null } },
       );
 
       await Phase.findByIdAndDelete(phaseId);
@@ -660,9 +715,11 @@ router.delete(
       res.json({ message: "Phase deleted successfully" });
     } catch (error: any) {
       console.error("Delete phase error:", error);
-      res.status(500).json({ message: "Failed to delete phase", error: error.message });
+      res
+        .status(500)
+        .json({ message: "Failed to delete phase", error: error.message });
     }
-  }
+  },
 );
 
 export default router;

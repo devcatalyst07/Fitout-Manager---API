@@ -1,5 +1,6 @@
-import express from 'express';
+import express from "express";
 import { authMiddleware } from "../middleware/auth";
+import { requireProjectAccess } from "../middleware/permissions";
 import Task from "../models/Task";
 import ActivityLog from "../models/ActivityLog";
 import Project from "../models/Projects";
@@ -11,6 +12,7 @@ const router = express.Router();
 router.get(
   "/:projectId/overview/activity",
   authMiddleware,
+  requireProjectAccess,
   async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;
@@ -51,6 +53,7 @@ router.get(
 router.get(
   "/:projectId/overview/deadlines",
   authMiddleware,
+  requireProjectAccess,
   async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;
@@ -88,6 +91,7 @@ router.get(
 router.get(
   "/:projectId/overview/stats",
   authMiddleware,
+  requireProjectAccess,
   async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;
@@ -127,7 +131,7 @@ router.get(
         tasksCompleted: Math.round(tasksCompletedPercent * 10) / 10,
         totalTasks,
         completedTasks,
-        openApprovals, 
+        openApprovals,
       };
 
       res.json(stats);
