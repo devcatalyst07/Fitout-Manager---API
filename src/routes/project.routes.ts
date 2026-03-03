@@ -19,8 +19,8 @@ router.get("/stats", authMiddleware, async (req: express.Request, res: express.R
     let projectFilter: any = {};
 
     if (req.user!.role === "admin") {
-      // Admin sees all projects
-      projectFilter = {};
+      // Tenant isolation: admin sees only projects created under their account
+      projectFilter = { userId: req.user!.id };
     } else {
       // User sees only assigned projects
       const teamMembers = await TeamMember.find({
@@ -75,8 +75,8 @@ router.get("/", authMiddleware, async (req: express.Request, res: express.Respon
     let projectFilter: any = {};
 
     if (req.user!.role === "admin") {
-      // Admin sees all projects
-      projectFilter = {};
+      // Tenant isolation: admin sees only projects created under their account
+      projectFilter = { userId: req.user!.id };
     } else {
       // User sees only assigned projects
       const teamMembers = await TeamMember.find({
@@ -123,7 +123,7 @@ router.get("/:id", authMiddleware, async (req: express.Request, res: express.Res
       req.user!.role,
     );
 
-    // Check project access for users
+    // Check project access for users/admins
     if (req.user!.role !== "admin") {
       const teamMember = await TeamMember.findOne({
         userId: req.user!.id,
@@ -133,6 +133,14 @@ router.get("/:id", authMiddleware, async (req: express.Request, res: express.Res
 
       if (!teamMember) {
         console.log("⚠️ User not authorized for this project");
+        return res
+          .status(403)
+          .json({ message: "Not authorized to access this project" });
+      }
+    } else {
+      // Tenant isolation: admin can only access own projects
+      const ownProject = await Project.findOne({ _id: id, userId: req.user!.id });
+      if (!ownProject) {
         return res
           .status(403)
           .json({ message: "Not authorized to access this project" });
@@ -214,7 +222,11 @@ router.post("/", authMiddleware, async (req: express.Request, res: express.Respo
     }
 
     const Brand = require('../models/Brand').default;
-    const brandExists = await Brand.findOne({ name: brand, isActive: true });
+    const brandExists = await Brand.findOne({
+      name: brand,
+      isActive: true,
+      createdBy: req.user!.id,
+    });
     if (!brandExists) {
       return res.status(400).json({ message: "Invalid brand selected" });
     }
@@ -283,7 +295,7 @@ router.put("/:id", authMiddleware, async (req: express.Request, res: express.Res
       req.user!.role,
     );
 
-    // Check project access for users
+    // Check project access for users/admins
     if (req.user!.role !== "admin") {
       const teamMember = await TeamMember.findOne({
         userId: req.user!.id,
@@ -315,6 +327,14 @@ router.put("/:id", authMiddleware, async (req: express.Request, res: express.Res
         return res
           .status(403)
           .json({ message: "No permission to edit projects" });
+      }
+    } else {
+      // Tenant isolation: admin can only update own projects
+      const ownProject = await Project.findOne({ _id: id, userId: req.user!.id });
+      if (!ownProject) {
+        return res
+          .status(403)
+          .json({ message: "Not authorized to update this project" });
       }
     }
 
@@ -401,6 +421,13 @@ router.delete("/:id", authMiddleware, async (req: express.Request, res: express.
       return res.status(404).json({ message: "Project not found" });
     }
 
+    // Tenant isolation: admin can only delete own projects
+    if (String(project.userId) !== String(req.user!.id)) {
+      return res
+        .status(403)
+        .json({ message: "Not authorized to delete this project" });
+    }
+
     await Project.findByIdAndDelete(id);
 
     // Also delete related team members
@@ -426,7 +453,7 @@ router.get("/:id/stats", authMiddleware, async (req: express.Request, res: expre
     const { id } = req.params;
     console.log("📊 GET /api/projects/:id/stats - Project:", id);
 
-    // Check project access for users
+    // Check project access for users/admins
     if (req.user!.role !== "admin") {
       const teamMember = await TeamMember.findOne({
         userId: req.user!.id,
@@ -435,6 +462,14 @@ router.get("/:id/stats", authMiddleware, async (req: express.Request, res: expre
       });
 
       if (!teamMember) {
+        return res
+          .status(403)
+          .json({ message: "Not authorized to access this project" });
+      }
+    } else {
+      // Tenant isolation: admin can only access own project stats
+      const ownProject = await Project.findOne({ _id: id, userId: req.user!.id });
+      if (!ownProject) {
         return res
           .status(403)
           .json({ message: "Not authorized to access this project" });

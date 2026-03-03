@@ -5,8 +5,31 @@ import Tender from '../models/Tender';
 import TenderBid from '../models/TenderBid';
 import TenderRFI from '../models/TenderRFI';
 import Contractor from '../models/Contractor';
+import Project from '../models/Projects';
+import TeamMember from '../models/TeamMember';
 
 const router = express.Router();
+
+const canAccessProject = async (user: any, projectId: string): Promise<boolean> => {
+  if (user.role === 'admin') {
+    const project = await Project.findOne({ _id: projectId, userId: user.id }).select('_id');
+    return !!project;
+  }
+
+  const membership = await TeamMember.findOne({
+    userId: user.id,
+    projectId,
+    status: 'active',
+  }).select('_id');
+
+  return !!membership;
+};
+
+const canAccessTender = async (user: any, tenderId: string): Promise<boolean> => {
+  const tender = await Tender.findById(tenderId).select('projectId');
+  if (!tender) return false;
+  return canAccessProject(user, String((tender as any).projectId));
+};
 
 // ==================== TENDER ROUTES ====================
 
@@ -14,6 +37,11 @@ const router = express.Router();
 router.get('/projects/:projectId/tenders', authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { projectId } = req.params;
+
+    const hasAccess = await canAccessProject(req.user, projectId);
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Not authorized to access this project' });
+    }
     
     const tenders = await Tender.find({ projectId })
       .populate('createdBy', 'name email')
@@ -30,6 +58,11 @@ router.get('/projects/:projectId/tenders', authMiddleware, async (req: express.R
 router.get('/tenders/:tenderId', authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { tenderId } = req.params;
+
+    const hasAccess = await canAccessTender(req.user, tenderId);
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Not authorized to access this tender' });
+    }
     
     const tender = await Tender.findById(tenderId)
       .populate('createdBy', 'name email');
@@ -59,6 +92,11 @@ router.get('/tenders/:tenderId', authMiddleware, async (req: express.Request, re
 router.post('/projects/:projectId/tenders', authMiddleware, requireAdmin, async (req: express.Request, res: express.Response) => {
   try {
     const { projectId } = req.params;
+
+    const hasAccess = await canAccessProject(req.user, projectId);
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Not authorized to access this project' });
+    }
     const {
       title,
       description,
@@ -106,6 +144,11 @@ router.post('/projects/:projectId/tenders', authMiddleware, requireAdmin, async 
 router.put('/tenders/:tenderId', authMiddleware, requireAdmin, async (req: express.Request, res: express.Response) => {
   try {
     const { tenderId } = req.params;
+
+    const hasAccess = await canAccessTender(req.user, tenderId);
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Not authorized to access this tender' });
+    }
     
     const tender = await Tender.findById(tenderId);
     if (!tender) {
@@ -136,6 +179,11 @@ router.put('/tenders/:tenderId', authMiddleware, requireAdmin, async (req: expre
 router.post('/tenders/:tenderId/issue', authMiddleware, requireAdmin, async (req: express.Request, res: express.Response) => {
   try {
     const { tenderId } = req.params;
+
+    const hasAccess = await canAccessTender(req.user, tenderId);
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Not authorized to access this tender' });
+    }
     
     const tender = await Tender.findById(tenderId);
     if (!tender) {
@@ -175,6 +223,11 @@ router.post('/tenders/:tenderId/issue', authMiddleware, requireAdmin, async (req
 router.delete('/tenders/:tenderId', authMiddleware, requireAdmin, async (req: express.Request, res: express.Response) => {
   try {
     const { tenderId } = req.params;
+
+    const hasAccess = await canAccessTender(req.user, tenderId);
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Not authorized to access this tender' });
+    }
     
     const tender = await Tender.findById(tenderId);
     if (!tender) {
@@ -203,6 +256,11 @@ router.delete('/tenders/:tenderId', authMiddleware, requireAdmin, async (req: ex
 router.get('/tenders/:tenderId/bids', authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { tenderId } = req.params;
+
+    const hasAccess = await canAccessTender(req.user, tenderId);
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Not authorized to access this tender' });
+    }
     
     const bids = await TenderBid.find({ tenderId })
       .populate('reviewedBy', 'name email')
@@ -219,6 +277,11 @@ router.get('/tenders/:tenderId/bids', authMiddleware, async (req: express.Reques
 router.post('/tenders/:tenderId/bids', authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { tenderId } = req.params;
+
+    const hasAccess = await canAccessTender(req.user, tenderId);
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Not authorized to access this tender' });
+    }
     const {
       contractorId,
       contractorName,
@@ -278,7 +341,12 @@ router.post('/tenders/:tenderId/bids', authMiddleware, async (req: express.Reque
 // SUBMIT bid
 router.post('/tenders/:tenderId/bids/:bidId/submit', authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
-    const { bidId } = req.params;
+    const { tenderId, bidId } = req.params;
+
+    const hasAccess = await canAccessTender(req.user, tenderId);
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Not authorized to access this tender' });
+    }
     
     const bid = await TenderBid.findById(bidId);
     if (!bid) {
@@ -312,7 +380,12 @@ router.post('/tenders/:tenderId/bids/:bidId/submit', authMiddleware, async (req:
 // EVALUATE bid
 router.put('/tenders/:tenderId/bids/:bidId/evaluate', authMiddleware, requireAdmin, async (req: express.Request, res: express.Response) => {
   try {
-    const { bidId } = req.params;
+    const { tenderId, bidId } = req.params;
+
+    const hasAccess = await canAccessTender(req.user, tenderId);
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Not authorized to access this tender' });
+    }
     const { evaluationScore, evaluationNotes, status } = req.body;
     
     const bid = await TenderBid.findById(bidId);
@@ -342,6 +415,11 @@ router.put('/tenders/:tenderId/bids/:bidId/evaluate', authMiddleware, requireAdm
 router.post('/tenders/:tenderId/award', authMiddleware, requireAdmin, async (req: express.Request, res: express.Response) => {
   try {
     const { tenderId } = req.params;
+
+    const hasAccess = await canAccessTender(req.user, tenderId);
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Not authorized to access this tender' });
+    }
     const { bidId, awardedReason } = req.body;
     
     if (!bidId) {
@@ -389,6 +467,11 @@ router.post('/tenders/:tenderId/award', authMiddleware, requireAdmin, async (req
 router.get('/tenders/:tenderId/rfis', authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { tenderId } = req.params;
+
+    const hasAccess = await canAccessTender(req.user, tenderId);
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Not authorized to access this tender' });
+    }
     
     const rfis = await TenderRFI.find({ tenderId })
       .populate('answeredBy', 'name email')
@@ -405,6 +488,11 @@ router.get('/tenders/:tenderId/rfis', authMiddleware, async (req: express.Reques
 router.post('/tenders/:tenderId/rfis', authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
     const { tenderId } = req.params;
+
+    const hasAccess = await canAccessTender(req.user, tenderId);
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Not authorized to access this tender' });
+    }
     const { contractorId, contractorName, question } = req.body;
     
     if (!question) {
@@ -448,6 +536,11 @@ router.put('/rfis/:rfiId/answer', authMiddleware, requireAdmin, async (req: expr
     if (!rfi) {
       return res.status(404).json({ message: 'RFI not found' });
     }
+
+    const hasAccess = await canAccessTender(req.user, String((rfi as any).tenderId));
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Not authorized to access this tender' });
+    }
     
     rfi.response = response;
     rfi.status = 'Answered';
@@ -470,7 +563,7 @@ router.put('/rfis/:rfiId/answer', authMiddleware, requireAdmin, async (req: expr
 // GET all contractors
 router.get('/contractors', authMiddleware, requireAdmin, async (req: express.Request, res: express.Response) => {
   try {
-    const contractors = await Contractor.find({ status: { $ne: 'Blacklisted' } })
+    const contractors = await Contractor.find({ status: { $ne: 'Blacklisted' }, createdBy: req.user!.id })
       .sort({ name: 1 });
     
     res.json(contractors);
@@ -498,7 +591,7 @@ router.post('/contractors', authMiddleware, requireAdmin, async (req: express.Re
       return res.status(400).json({ message: 'Name, email, and company name are required' });
     }
     
-    const existing = await Contractor.findOne({ email });
+    const existing = await Contractor.findOne({ email, createdBy: req.user!.id });
     if (existing) {
       return res.status(400).json({ message: 'Contractor with this email already exists' });
     }
@@ -530,8 +623,8 @@ router.put('/contractors/:contractorId', authMiddleware, requireAdmin, async (re
   try {
     const { contractorId } = req.params;
     
-    const contractor = await Contractor.findByIdAndUpdate(
-      contractorId,
+    const contractor = await Contractor.findOneAndUpdate(
+      { _id: contractorId, createdBy: req.user!.id },
       { $set: req.body },
       { new: true, runValidators: true }
     );
@@ -554,6 +647,11 @@ router.put('/contractors/:contractorId', authMiddleware, requireAdmin, async (re
 router.post('/tenders/:tenderId/ai-recommendations', authMiddleware, requireAdmin, async (req: express.Request, res: express.Response) => {
   try {
     const { tenderId } = req.params;
+
+    const hasAccess = await canAccessTender(req.user, tenderId);
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Not authorized to access this tender' });
+    }
     
     const tender = await Tender.findById(tenderId);
     if (!tender) {
@@ -564,6 +662,7 @@ router.post('/tenders/:tenderId/ai-recommendations', authMiddleware, requireAdmi
       status: 'Active',
       isApproved: true,
       categories: tender.category,
+      createdBy: req.user!.id,
     });
     
     const scoredContractors = contractors.map(contractor => {

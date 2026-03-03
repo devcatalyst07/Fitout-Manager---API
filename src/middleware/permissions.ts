@@ -18,6 +18,13 @@ export const requireProjectAccess = async (
     }
 
     if (user.role === 'admin') {
+      const ownedProject = await Project.findOne({ _id: projectId, userId: user.id });
+      if (!ownedProject) {
+        res.status(403).json({
+          message: 'You do not have access to this project',
+        });
+        return;
+      }
       next();
       return;
     }

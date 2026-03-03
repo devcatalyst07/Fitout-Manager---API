@@ -58,6 +58,10 @@ router.post('/brands/:brandId/threads', authMiddleware, async (req: express.Requ
       return res.status(404).json({ message: 'Brand not found' });
     }
 
+    if (req.user!.role === 'admin' && String(brand.createdBy) !== String(req.user!.id)) {
+      return res.status(403).json({ message: 'Not authorized for this brand' });
+    }
+
     console.log('Brand found:', brand.name);
 
     // If projectId specified, verify user is team member
@@ -114,6 +118,10 @@ router.get('/brands/:brandId/threads', authMiddleware, async (req: express.Reque
     if (!brand) {
       console.log('Brand not found:', brandId);
       return res.status(404).json({ message: 'Brand not found' });
+    }
+
+    if (req.user!.role === 'admin' && String(brand.createdBy) !== String(req.user!.id)) {
+      return res.status(403).json({ message: 'Not authorized for this brand' });
     }
 
     // Build query
@@ -187,6 +195,10 @@ router.get('/brands/:brandId/projects', authMiddleware, async (req: express.Requ
     const brand = await Brand.findById(brandId);
     if (!brand) {
       return res.status(404).json({ message: 'Brand not found' });
+    }
+
+    if (req.user!.role === 'admin' && String(brand.createdBy) !== String(req.user!.id)) {
+      return res.status(403).json({ message: 'Not authorized for this brand' });
     }
 
     // Get projects where user is a team member

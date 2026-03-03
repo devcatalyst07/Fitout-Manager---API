@@ -67,8 +67,8 @@ router.get("/projects", authMiddleware, async (req: express.Request, res: expres
     let projectFilter: any = {};
 
     if (req.user!.role === "admin") {
-      // Admin sees all projects
-      projectFilter = {};
+      // Tenant isolation: admin sees only own projects
+      projectFilter = { userId: req.user!.id };
     } else {
       // User sees only assigned projects
       const TeamMember = require("../models/TeamMember").default;
@@ -107,8 +107,8 @@ router.get("/folders", authMiddleware, async (req: express.Request, res: express
     let projectFilter: any = {};
 
     if (req.user!.role === "admin") {
-      // Admin sees all projects
-      projectFilter = {};
+      // Tenant isolation: admin sees only own projects
+      projectFilter = { userId: req.user!.id };
     } else {
       // User sees only assigned projects
       const TeamMember = require("../models/TeamMember").default;
@@ -165,7 +165,12 @@ router.get(
     try {
       const { projectId } = req.params;
 
-      // Check project access for users
+      const project = await Project.findById(projectId);
+      if (!project) {
+        return res.status(404).json({ message: "Project not found" });
+      }
+
+      // Check project access for users/admins
       if (req.user!.role !== "admin") {
         const TeamMember = require("../models/TeamMember").default;
         const teamMember = await TeamMember.findOne({
@@ -179,6 +184,10 @@ router.get(
             .status(403)
             .json({ message: "Not authorized to access this project" });
         }
+      } else if (String(project.userId) !== String(req.user!.id)) {
+        return res
+          .status(403)
+          .json({ message: "Not authorized to access this project" });
       }
 
       const documents = await Document.find({ projectId })
@@ -217,7 +226,7 @@ router.post(
       if (!project)
         return res.status(404).json({ message: "Project not found" });
 
-      // Check project access for users
+      // Check project access for users/admins
       if (req.user!.role !== "admin") {
         const TeamMember = require("../models/TeamMember").default;
         const teamMember = await TeamMember.findOne({
@@ -231,6 +240,10 @@ router.post(
             .status(403)
             .json({ message: "Not authorized to upload to this project" });
         }
+      } else if (String(project.userId) !== String(req.user!.id)) {
+        return res
+          .status(403)
+          .json({ message: "Not authorized to upload to this project" });
       }
 
       const userId = req.user?.id;
@@ -328,8 +341,8 @@ router.get("/stats/overview", authMiddleware, async (req: express.Request, res: 
     let projectFilter: any = {};
 
     if (req.user!.role === "admin") {
-      // Admin sees all
-      projectFilter = {};
+      // Tenant isolation: admin sees only own projects
+      projectFilter = { userId: req.user!.id };
     } else {
       // User sees only assigned projects
       const TeamMember = require("../models/TeamMember").default;

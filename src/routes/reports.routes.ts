@@ -19,8 +19,8 @@ router.get(
       let projectFilter: any = {};
 
       if (req.user!.role === "admin") {
-        // Admin sees all projects
-        projectFilter = {};
+        // Tenant isolation: admin sees only own projects
+        projectFilter = { userId: req.user!.id };
       } else {
         // User sees only assigned projects
         const TeamMember = require("../models/TeamMember").default;
@@ -58,7 +58,10 @@ router.get("/reports/brands", authMiddleware, async (req: express.Request, res: 
   try {
     let brandFilter: any = { isActive: true };
 
-    if (req.user!.role !== "admin") {
+    let projects: any[] = [];
+    if (req.user!.role === "admin") {
+      projects = await Project.find({ userId: req.user!.id }).select("brand");
+    } else {
       // User sees only brands from their assigned projects
       const TeamMember = require("../models/TeamMember").default;
       const teamMembers = await TeamMember.find({
@@ -72,10 +75,13 @@ router.get("/reports/brands", authMiddleware, async (req: express.Request, res: 
         return res.json([]);
       }
 
-      const projects = await Project.find({ _id: { $in: projectIds } });
-      const userBrands = [...new Set(projects.map((p) => p.brand))];
+      projects = await Project.find({ _id: { $in: projectIds } }).select("brand");
+    }
 
-      brandFilter.name = { $in: userBrands };
+    const visibleBrands = [...new Set(projects.map((p: any) => p.brand))];
+    brandFilter.name = { $in: visibleBrands };
+    if (req.user!.role === "admin") {
+      brandFilter.createdBy = req.user!.id;
     }
 
     const brands = await Brand.find(brandFilter).select("name");
@@ -98,7 +104,7 @@ router.get(
       let projectFilter: any = {};
 
       if (req.user!.role === "admin") {
-        projectFilter = {};
+        projectFilter = { userId: req.user!.id };
       } else {
         const TeamMember = require("../models/TeamMember").default;
         const teamMembers = await TeamMember.find({
@@ -264,7 +270,7 @@ router.get(
       let projectFilter: any = {};
 
       if (req.user!.role === "admin") {
-        projectFilter = {};
+        projectFilter = { userId: req.user!.id };
       } else {
         const TeamMember = require("../models/TeamMember").default;
         const teamMembers = await TeamMember.find({
@@ -409,7 +415,9 @@ router.get(
 
       let projectFilter: any = { brand: brandName };
 
-      if (req.user!.role !== "admin") {
+      if (req.user!.role === "admin") {
+        projectFilter.userId = req.user!.id;
+      } else {
         const TeamMember = require("../models/TeamMember").default;
         const teamMembers = await TeamMember.find({
           userId: req.user!.id,
@@ -508,7 +516,9 @@ router.get(
 
       let projectFilter: any = { brand: brandName };
 
-      if (req.user!.role !== "admin") {
+      if (req.user!.role === "admin") {
+        projectFilter.userId = req.user!.id;
+      } else {
         const TeamMember = require("../models/TeamMember").default;
         const teamMembers = await TeamMember.find({
           userId: req.user!.id,
@@ -590,7 +600,7 @@ router.get(
     try {
       const { projectId } = req.params;
 
-      // Check project access for users
+      // Check project access for users/admins
       if (req.user!.role !== "admin") {
         const TeamMember = require("../models/TeamMember").default;
         const teamMember = await TeamMember.findOne({
@@ -600,6 +610,13 @@ router.get(
         });
 
         if (!teamMember) {
+          return res
+            .status(403)
+            .json({ message: "Not authorized to access this project" });
+        }
+      } else {
+        const ownedProject = await Project.findOne({ _id: projectId, userId: req.user!.id });
+        if (!ownedProject) {
           return res
             .status(403)
             .json({ message: "Not authorized to access this project" });
@@ -717,7 +734,7 @@ router.get(
     try {
       const { projectId } = req.params;
 
-      // Check project access for users
+      // Check project access for users/admins
       if (req.user!.role !== "admin") {
         const TeamMember = require("../models/TeamMember").default;
         const teamMember = await TeamMember.findOne({
@@ -727,6 +744,13 @@ router.get(
         });
 
         if (!teamMember) {
+          return res
+            .status(403)
+            .json({ message: "Not authorized to access this project" });
+        }
+      } else {
+        const ownedProject = await Project.findOne({ _id: projectId, userId: req.user!.id });
+        if (!ownedProject) {
           return res
             .status(403)
             .json({ message: "Not authorized to access this project" });

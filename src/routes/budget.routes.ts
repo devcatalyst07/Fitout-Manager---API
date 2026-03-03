@@ -1,6 +1,7 @@
 import express from 'express';
 import { authMiddleware } from '../middleware/auth';
 import { requireAdmin as adminOnly } from '../middleware/permissions';
+import { requireProjectAccess } from '../middleware/permissions';
 import BudgetItem from '../models/BudgetItem';
 import Project from '../models/Projects';
 import Approval from "../models/Approval";
@@ -9,7 +10,7 @@ import { activityHelpers } from "../utils/activityLogger";
 const router = express.Router();
 
 // GET all budget items for a project (Admin only)
-router.get('/:projectId/budget', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
+router.get('/:projectId/budget', authMiddleware, adminOnly, requireProjectAccess, async (req: express.Request, res: express.Response) => {
   try {
     const { projectId } = req.params;
 
@@ -46,7 +47,7 @@ router.get('/:projectId/budget', authMiddleware, adminOnly, async (req: express.
 });
 
 // GET budget summary/statistics (Admin only)
-router.get('/:projectId/budget/stats', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
+router.get('/:projectId/budget/stats', authMiddleware, adminOnly, requireProjectAccess, async (req: express.Request, res: express.Response) => {
   try {
     const { projectId } = req.params;
 
@@ -130,7 +131,7 @@ router.get('/:projectId/budget/stats', authMiddleware, adminOnly, async (req: ex
 });
 
 // CREATE new budget item (Admin only)
-router.post('/:projectId/budget', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
+router.post('/:projectId/budget', authMiddleware, adminOnly, requireProjectAccess, async (req: express.Request, res: express.Response) => {
   try {
     const { projectId } = req.params;
     const {
@@ -198,7 +199,7 @@ router.post('/:projectId/budget', authMiddleware, adminOnly, async (req: express
 });
 
 // UPDATE budget item (Admin only)
-router.put('/:projectId/budget/:itemId', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
+router.put('/:projectId/budget/:itemId', authMiddleware, adminOnly, requireProjectAccess, async (req: express.Request, res: express.Response) => {
   try {
     const { projectId, itemId } = req.params;
     const updateData = req.body;
@@ -238,7 +239,7 @@ router.put('/:projectId/budget/:itemId', authMiddleware, adminOnly, async (req: 
 });
 
 // DELETE budget item (Admin only)
-router.delete('/:projectId/budget/:itemId', authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
+router.delete('/:projectId/budget/:itemId', authMiddleware, adminOnly, requireProjectAccess, async (req: express.Request, res: express.Response) => {
   try {
     const { projectId, itemId } = req.params;
 

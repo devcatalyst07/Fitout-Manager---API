@@ -1,5 +1,6 @@
 import express from 'express';
 import { authMiddleware } from "../middleware/auth";
+import { requireProjectAccess } from "../middleware/permissions";
 import Task from "../models/Task";
 import Project from "../models/Projects";
 import BudgetItem from "../models/BudgetItem";
@@ -11,6 +12,7 @@ const router = express.Router();
 router.get(
   "/:projectId/insights",
   authMiddleware,
+  requireProjectAccess,
   async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;

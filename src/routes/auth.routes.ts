@@ -193,7 +193,7 @@ router.post(
   authRateLimiter,
   async (req: express.Request, res: express.Response) => {
     try {
-      const { email, password, rememberMe } = req.body;
+      const { email, password, rememberMe, loginType } = req.body;
 
       // Validation
       if (!email || !password) {
@@ -226,6 +226,19 @@ router.post(
           message: "Please verify your email before logging in.",
           code: "EMAIL_NOT_VERIFIED",
           verificationRequired: true,
+        });
+      }
+
+      if (
+        (loginType === "user" || loginType === "admin") &&
+        loginType !== user.role
+      ) {
+        return res.status(403).json({
+          message:
+            user.role === "admin"
+              ? "This account is an admin account. Please login via the Admin tab."
+              : "This account is a user account. Please login via the User tab.",
+          code: "ROLE_LOGIN_MISMATCH",
         });
       }
 

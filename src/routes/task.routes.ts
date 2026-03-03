@@ -18,8 +18,36 @@ router.get('/dashboard', authMiddleware, async (req: express.Request, res: expre
   try {
     console.log('Dashboard Tasks API called');
 
+    let projectIds: any[] = [];
+
+    if (req.user!.role === 'admin') {
+      const ownedProjects = await Project.find({ userId: req.user!.id }).select('_id');
+      projectIds = ownedProjects.map((p) => p._id);
+    } else {
+      const TeamMember = require('../models/TeamMember').default;
+      const teamMembers = await TeamMember.find({
+        userId: req.user!.id,
+        status: 'active',
+      }).select('projectId');
+      projectIds = teamMembers.map((tm: any) => tm.projectId);
+    }
+
+    if (projectIds.length === 0) {
+      return res.json({
+        tasks: [],
+        tasksByBrand: {},
+        brands: [],
+        summary: {
+          total: 0,
+          upcoming: 0,
+          overdue: 0,
+          completed: 0,
+        },
+      });
+    }
+
     // Fetch all project tasks (isTemplate = false)
-    const tasks = await Task.find({ isTemplate: false })
+    const tasks = await Task.find({ isTemplate: false, projectId: { $in: projectIds } })
       .populate('projectId', 'brand projectName')
       .sort({ dueDate: 1 }) // Sort by due date ascending
       .lean();

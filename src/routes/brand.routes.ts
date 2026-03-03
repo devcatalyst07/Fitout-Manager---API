@@ -4,15 +4,42 @@ import { requireAdmin as adminOnly } from '../middleware/permissions';
 import Brand from "../models/Brand";
 import Project from "../models/Projects";
 import Task from "../models/Task";
+import TeamMember from "../models/TeamMember";
 
 const router = express.Router();
 
 // GET all brands
 router.get("/", authMiddleware, async (req: express.Request, res: express.Response) => {
   try {
-    const brands = await Brand.find({ isActive: true })
-      .populate("createdBy", "name email")
-      .sort({ createdAt: -1 });
+    let brands: any[] = [];
+
+    if (req.user!.role === "admin") {
+      brands = await Brand.find({ isActive: true, createdBy: req.user!.id })
+        .populate("createdBy", "name email")
+        .sort({ createdAt: -1 });
+    } else {
+      const teamMemberships = await TeamMember.find({
+        userId: req.user!.id,
+        status: "active",
+      }).populate("projectId", "brand");
+
+      const visibleBrandNames = [
+        ...new Set(
+          teamMemberships
+            .map((tm: any) => tm.projectId?.brand)
+            .filter(Boolean),
+        ),
+      ];
+
+      if (visibleBrandNames.length > 0) {
+        brands = await Brand.find({
+          isActive: true,
+          name: { $in: visibleBrandNames },
+        })
+          .populate("createdBy", "name email")
+          .sort({ createdAt: -1 });
+      }
+    }
 
     res.json(brands);
   } catch (error) {
@@ -24,7 +51,7 @@ router.get("/", authMiddleware, async (req: express.Request, res: express.Respon
 // GET all brands (including inactive - admin only)
 router.get("/all", authMiddleware, adminOnly, async (req: express.Request, res: express.Response) => {
   try {
-    const brands = await Brand.find()
+    const brands = await Brand.find({ createdBy: req.user!.id })
       .populate("createdBy", "name email")
       .sort({ createdAt: -1 });
 
@@ -46,8 +73,17 @@ router.get("/:id/dashboard", authMiddleware, async (req: express.Request, res: e
       return res.status(404).json({ message: "Brand not found" });
     }
 
+    if (req.user!.role === "admin" && String((brand as any).createdBy?._id || brand.createdBy) !== String(req.user!.id)) {
+      return res.status(403).json({ message: "Not authorized to access this brand" });
+    }
+
     // Get all projects for this brand
-    const projects = await Project.find({ brand: brand.name })
+    const projectFilter: any = { brand: brand.name };
+    if (req.user!.role === "admin") {
+      projectFilter.userId = req.user!.id;
+    }
+
+    const projects = await Project.find(projectFilter)
       .populate("userId", "name email")
       .sort({ createdAt: -1 });
 
@@ -121,6 +157,10 @@ router.get("/:id/team", authMiddleware, async (req: express.Request, res: expres
       return res.status(404).json({ message: "Brand not found" });
     }
 
+    if (req.user!.role === "admin" && String(brand.createdBy) !== String(req.user!.id)) {
+      return res.status(403).json({ message: "Not authorized to access this brand" });
+    }
+
     const teamMembers = brand.teamMembers || [];
     res.json(teamMembers);
   } catch (error) {
@@ -142,6 +182,10 @@ router.post("/:id/team", authMiddleware, async (req: express.Request, res: expre
     const brand = await Brand.findById(id);
     if (!brand) {
       return res.status(404).json({ message: "Brand not found" });
+    }
+
+    if (req.user!.role === "admin" && String(brand.createdBy) !== String(req.user!.id)) {
+      return res.status(403).json({ message: "Not authorized to modify this brand" });
     }
 
     const teamMembers = brand.teamMembers || [];
@@ -180,7 +224,7 @@ router.post("/", authMiddleware, adminOnly, async (req: express.Request, res: ex
       return res.status(400).json({ message: "Brand name is required" });
     }
 
-    const existingBrand = await Brand.findOne({ name });
+    const existingBrand = await Brand.findOne({ name, createdBy: req.user!.id });
     if (existingBrand) {
       return res.status(400).json({ message: "Brand already exists" });
     }
@@ -217,13 +261,13 @@ router.put("/:id", authMiddleware, adminOnly, async (req: express.Request, res: 
       return res.status(400).json({ message: "Brand name is required" });
     }
 
-    const existingBrand = await Brand.findOne({ name, _id: { $ne: id } });
+    const existingBrand = await Brand.findOne({ name, createdBy: req.user!.id, _id: { $ne: id } });
     if (existingBrand) {
       return res.status(400).json({ message: "Brand name already exists" });
     }
 
-    const updatedBrand = await Brand.findByIdAndUpdate(
-      id,
+    const updatedBrand = await Brand.findOneAndUpdate(
+      { _id: id, createdBy: req.user!.id },
       { name, description, isActive },
       { new: true, runValidators: true },
     ).populate("createdBy", "name email");
@@ -247,7 +291,7 @@ router.delete("/:id", authMiddleware, adminOnly, async (req: express.Request, re
   try {
     const { id } = req.params;
 
-    const deletedBrand = await Brand.findByIdAndDelete(id);
+    const deletedBrand = await Brand.findOneAndDelete({ _id: id, createdBy: req.user!.id });
 
     if (!deletedBrand) {
       return res.status(404).json({ message: "Brand not found" });

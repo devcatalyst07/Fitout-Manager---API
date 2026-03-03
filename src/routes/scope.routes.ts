@@ -8,6 +8,8 @@ import Workflow from '../models/Workflow';
 import Phase from '../models/Phase';
 import Task from '../models/Task';
 import Brand from '../models/Brand';
+import Project from '../models/Projects';
+import TeamMember from '../models/TeamMember';
 
 const router = express.Router();
 
@@ -37,7 +39,7 @@ router.get('/', authMiddleware, adminOnly, async (req: express.Request, res: exp
   try {
     const { brandFilter, brandId } = req.query;
 
-    let query: any = { isActive: true };
+    let query: any = { isActive: true, createdBy: req.user!.id };
 
     if (brandFilter === 'all') {
       query.brandFilter = 'all';
@@ -63,7 +65,7 @@ router.get('/:id', authMiddleware, adminOnly, async (req: express.Request, res: 
   try {
     const { id } = req.params;
 
-    const scope = await Scope.findById(id)
+    const scope = await Scope.findOne({ _id: id, createdBy: req.user!.id })
       .populate('createdBy', 'name email')
       .populate('brandId', 'name');
 
@@ -90,13 +92,51 @@ router.get('/for-brand/:brandName', authMiddleware, async (req: express.Request,
   try {
     const { brandName } = req.params;
 
-    const scopes = await Scope.find({
+    const query: any = {
       isActive: true,
       $or: [
         { brandFilter: 'all' },
         { brandFilter: 'specific', brandName: brandName },
       ],
-    }).sort({ name: 1 });
+    };
+
+    if (req.user!.role === 'admin') {
+      const ownBrand = await Brand.findOne({
+        name: brandName,
+        createdBy: req.user!.id,
+        isActive: true,
+      });
+
+      if (!ownBrand) {
+        return res.json([]);
+      }
+
+      query.createdBy = req.user!.id;
+    } else {
+      const memberships = await TeamMember.find({
+        userId: req.user!.id,
+        status: 'active',
+      }).select('projectId');
+      const projectIds = memberships.map((m: any) => m.projectId);
+
+      if (projectIds.length === 0) {
+        return res.json([]);
+      }
+
+      const visibleProjects = await Project.find({
+        _id: { $in: projectIds },
+        brand: brandName,
+      }).select('userId');
+
+      const ownerIds = [...new Set(visibleProjects.map((p: any) => p.userId?.toString()).filter(Boolean))];
+      if (ownerIds.length === 0) {
+        return res.json([]);
+      }
+
+      query.createdBy = { $in: ownerIds };
+    }
+
+    const scopes = await Scope.find(query).sort({ name: 1 });
 
     // For each scope, get its workflows
     const scopesWithWorkflows = await Promise.all(
@@ -150,6 +190,7 @@ router.post('/', authMiddleware, adminOnly, async (req: express.Request, res: ex
     const existingScope = await Scope.findOne({
       name,
       brandFilter,
+      createdBy: req.user!.id,
       ...(brandFilter === 'specific' ? { brandId } : {}),
     });
 
@@ -190,7 +231,7 @@ router.put('/:id', authMiddleware, adminOnly, async (req: express.Request, res: 
     const { id } = req.params;
     const { name, description, brandFilter, brandId, isActive } = req.body;
 
-    const scope = await Scope.findById(id);
+    const scope = await Scope.findOne({ _id: id, createdBy: req.user!.id });
     if (!scope) {
       return res.status(404).json({ message: 'Scope not found' });
     }
@@ -208,6 +249,7 @@ router.put('/:id', authMiddleware, adminOnly, async (req: express.Request, res: 
       const existingScope = await Scope.findOne({
         _id: { $ne: id },
         name,
+        createdBy: req.user!.id,
         brandFilter: brandFilter || scope.brandFilter,
         ...(brandFilter === 'specific' || scope.brandFilter === 'specific'
           ? { brandId: brandId || scope.brandId }
@@ -219,8 +261,8 @@ router.put('/:id', authMiddleware, adminOnly, async (req: express.Request, res: 
       }
     }
 
-    const updatedScope = await Scope.findByIdAndUpdate(
-      id,
+    const updatedScope = await Scope.findOneAndUpdate(
+      { _id: id, createdBy: req.user!.id },
       {
         name: name || scope.name,
         description,
@@ -249,13 +291,13 @@ router.delete('/:id', authMiddleware, adminOnly, async (req: express.Request, re
   try {
     const { id } = req.params;
 
-    const scope = await Scope.findById(id);
+    const scope = await Scope.findOne({ _id: id, createdBy: req.user!.id });
     if (!scope) {
       return res.status(404).json({ message: 'Scope not found' });
     }
 
     // Delete all workflows for this scope
-    const workflows = await Workflow.find({ scopeId: id });
+    const workflows = await Workflow.find({ scopeId: id, createdBy: req.user!.id });
     const workflowIds = workflows.map(w => w._id);
 
     // Delete all phases for these workflows
@@ -265,10 +307,10 @@ router.delete('/:id', authMiddleware, adminOnly, async (req: express.Request, re
     await Task.deleteMany({ workflowId: { $in: workflowIds }, isTemplate: true });
 
     // Delete all workflows
-    await Workflow.deleteMany({ scopeId: id });
+    await Workflow.deleteMany({ scopeId: id, createdBy: req.user!.id });
 
     // Delete the scope
-    await Scope.findByIdAndDelete(id);
+    await Scope.findOneAndDelete({ _id: id, createdBy: req.user!.id });
 
     res.json({ message: 'Scope and all related data deleted successfully' });
   } catch (error) {
@@ -284,7 +326,7 @@ router.get('/:scopeId/workflows', authMiddleware, adminOnly, async (req: express
   try {
     const { scopeId } = req.params;
 
-    const workflows = await Workflow.find({ scopeId, isActive: true })
+    const workflows = await Workflow.find({ scopeId, isActive: true, createdBy: req.user!.id })
       .sort({ createdAt: -1 });
 
     res.json(workflows);
@@ -299,7 +341,7 @@ router.get('/:scopeId/workflows/:workflowId', authMiddleware, adminOnly, async (
   try {
     const { scopeId, workflowId } = req.params;
 
-    const workflow = await Workflow.findOne({ _id: workflowId, scopeId });
+    const workflow = await Workflow.findOne({ _id: workflowId, scopeId, createdBy: req.user!.id });
     if (!workflow) {
       return res.status(404).json({ message: 'Workflow not found' });
     }
@@ -348,13 +390,13 @@ router.post('/:scopeId/workflows', authMiddleware, adminOnly, async (req: expres
       return res.status(400).json({ message: 'Workflow name is required' });
     }
 
-    const scope = await Scope.findById(scopeId);
+    const scope = await Scope.findOne({ _id: scopeId, createdBy: req.user!.id });
     if (!scope) {
       return res.status(404).json({ message: 'Scope not found' });
     }
 
     // Check for duplicate workflow name in this scope
-    const existingWorkflow = await Workflow.findOne({ scopeId, name });
+    const existingWorkflow = await Workflow.findOne({ scopeId, name, createdBy: req.user!.id });
     if (existingWorkflow) {
       return res.status(400).json({ message: 'Workflow name already exists in this scope' });
     }
@@ -382,7 +424,7 @@ router.put('/:scopeId/workflows/:workflowId', authMiddleware, adminOnly, async (
     const { scopeId, workflowId } = req.params;
     const { name, description, isActive } = req.body;
 
-    const workflow = await Workflow.findOne({ _id: workflowId, scopeId });
+    const workflow = await Workflow.findOne({ _id: workflowId, scopeId, createdBy: req.user!.id });
     if (!workflow) {
       return res.status(404).json({ message: 'Workflow not found' });
     }
@@ -391,6 +433,7 @@ router.put('/:scopeId/workflows/:workflowId', authMiddleware, adminOnly, async (
       const duplicate = await Workflow.findOne({
         _id: { $ne: workflowId },
         scopeId,
+        createdBy: req.user!.id,
         name,
       });
       if (duplicate) {
@@ -398,8 +441,8 @@ router.put('/:scopeId/workflows/:workflowId', authMiddleware, adminOnly, async (
       }
     }
 
-    const updatedWorkflow = await Workflow.findByIdAndUpdate(
-      workflowId,
+    const updatedWorkflow = await Workflow.findOneAndUpdate(
+      { _id: workflowId, createdBy: req.user!.id },
       { name, description, isActive },
       { new: true, runValidators: true }
     );
@@ -419,7 +462,7 @@ router.delete('/:scopeId/workflows/:workflowId', authMiddleware, adminOnly, asyn
   try {
     const { scopeId, workflowId } = req.params;
 
-    const workflow = await Workflow.findOne({ _id: workflowId, scopeId });
+    const workflow = await Workflow.findOne({ _id: workflowId, scopeId, createdBy: req.user!.id });
     if (!workflow) {
       return res.status(404).json({ message: 'Workflow not found' });
     }
@@ -431,7 +474,7 @@ router.delete('/:scopeId/workflows/:workflowId', authMiddleware, adminOnly, asyn
     await Task.deleteMany({ workflowId, isTemplate: true });
 
     // Delete the workflow
-    await Workflow.findByIdAndDelete(workflowId);
+    await Workflow.findOneAndDelete({ _id: workflowId, createdBy: req.user!.id });
 
     res.json({ message: 'Workflow and all related data deleted successfully' });
   } catch (error) {
@@ -470,7 +513,7 @@ router.post('/:scopeId/workflows/:workflowId/phases', authMiddleware, adminOnly,
       return res.status(400).json({ message: 'Phase name is required' });
     }
 
-    const workflow = await Workflow.findOne({ _id: workflowId, scopeId });
+    const workflow = await Workflow.findOne({ _id: workflowId, scopeId, createdBy: req.user!.id });
     if (!workflow) {
       return res.status(404).json({ message: 'Workflow not found' });
     }
@@ -515,14 +558,15 @@ router.put('/:scopeId/workflows/:workflowId/phases/:phaseId', authMiddleware, ad
       workflowId,
       scopeId,
       isTemplate: true,
+      createdBy: req.user!.id,
     });
 
     if (!phase) {
       return res.status(404).json({ message: 'Phase not found' });
     }
 
-    const updatedPhase = await Phase.findByIdAndUpdate(
-      phaseId,
+    const updatedPhase = await Phase.findOneAndUpdate(
+      { _id: phaseId, createdBy: req.user!.id },
       { name, description, order, color },
       { new: true, runValidators: true }
     );
@@ -547,6 +591,7 @@ router.delete('/:scopeId/workflows/:workflowId/phases/:phaseId', authMiddleware,
       workflowId,
       scopeId,
       isTemplate: true,
+      createdBy: req.user!.id,
     });
 
     if (!phase) {
@@ -557,7 +602,7 @@ router.delete('/:scopeId/workflows/:workflowId/phases/:phaseId', authMiddleware,
     await Task.deleteMany({ phaseId, isTemplate: true });
 
     // Delete the phase
-    await Phase.findByIdAndDelete(phaseId);
+    await Phase.findOneAndDelete({ _id: phaseId, createdBy: req.user!.id });
 
     res.json({ message: 'Phase and all tasks deleted successfully' });
   } catch (error) {
@@ -578,6 +623,7 @@ router.get('/:scopeId/workflows/:workflowId/phases/:phaseId/tasks', authMiddlewa
       workflowId,
       scopeId,
       isTemplate: true,
+      createdBy: req.user!.id,
     }).sort({ order: 1 });
 
     res.json(tasks);
@@ -602,6 +648,7 @@ router.post('/:scopeId/workflows/:workflowId/phases/:phaseId/tasks', authMiddlew
       workflowId,
       scopeId,
       isTemplate: true,
+      createdBy: req.user!.id,
     });
 
     if (!phase) {
@@ -652,14 +699,15 @@ router.put('/:scopeId/workflows/:workflowId/phases/:phaseId/tasks/:taskId', auth
       workflowId,
       scopeId,
       isTemplate: true,
+      createdBy: req.user!.id,
     });
 
     if (!task) {
       return res.status(404).json({ message: 'Task not found' });
     }
 
-    const updatedTask = await Task.findByIdAndUpdate(
-      taskId,
+    const updatedTask = await Task.findOneAndUpdate(
+      { _id: taskId, createdBy: req.user!.id },
       { title, description, priority, estimateHours, order },
       { new: true, runValidators: true }
     );
@@ -685,13 +733,14 @@ router.delete('/:scopeId/workflows/:workflowId/phases/:phaseId/tasks/:taskId', a
       workflowId,
       scopeId,
       isTemplate: true,
+      createdBy: req.user!.id,
     });
 
     if (!task) {
       return res.status(404).json({ message: 'Task not found' });
     }
 
-    await Task.findByIdAndDelete(taskId);
+    await Task.findOneAndDelete({ _id: taskId, createdBy: req.user!.id });
 
     res.json({ message: 'Task deleted successfully' });
   } catch (error) {

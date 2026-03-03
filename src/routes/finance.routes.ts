@@ -25,7 +25,8 @@ router.get("/", authMiddleware, async (req: express.Request, res: express.Respon
     let projectFilter: any = {};
 
     if (req.user!.role === "admin") {
-      // Admin sees all projects
+      // Tenant isolation: admin sees only own projects
+      projectFilter.userId = req.user!.id;
       if (brand && brand !== "All") {
         projectFilter.brand = brand;
       }
@@ -280,10 +281,14 @@ router.get("/", authMiddleware, async (req: express.Request, res: express.Respon
       };
     });
 
-    // Get filters
-    const brands = await Brand.find({ isActive: true }).select("name");
-    const allProjects =
-      req.user!.role === "admin" ? await Project.find() : projects; // Users only see regions from their projects
+    // Get filters (tenant-safe): only brands from scoped projects
+    const scopedBrandNames = [...new Set(projects.map((p) => p.brand))];
+    const brands = await Brand.find({
+      isActive: true,
+      name: { $in: scopedBrandNames },
+      ...(req.user!.role === "admin" ? { createdBy: req.user!.id } : {}),
+    }).select("name");
+    const allProjects = projects;
     const regions = [
       ...new Set(allProjects.map((p) => p.region || "Unassigned Region")),
     ];
@@ -358,6 +363,12 @@ router.put(
       const project = await Project.findById(projectId);
       if (!project) {
         return res.status(404).json({ message: "Project not found" });
+      }
+
+      if (req.user!.role === "admin" && String(project.userId) !== String(req.user!.id)) {
+        return res
+          .status(403)
+          .json({ message: "Not authorized to update this project" });
       }
 
       project.eacPolicyType = eacPolicyType;
