@@ -1,8 +1,11 @@
-import express from 'express';
+import express from "express";
 import { authMiddleware } from "../middleware/auth";
-import { requireAdmin as adminOnly, requireProjectAccess } from '../middleware/permissions';
+import {
+  requireAdmin as adminOnly,
+  requireProjectAccess,
+} from "../middleware/permissions";
 import Approval from "../models/Approval";
-import mongoose, { Types } from 'mongoose';
+import mongoose, { Types } from "mongoose";
 
 const router = express.Router();
 
@@ -73,12 +76,10 @@ router.get(
       });
     } catch (error: any) {
       console.error("Get approval stats error:", error);
-      res
-        .status(500)
-        .json({
-          message: "Failed to fetch approval stats",
-          error: error.message,
-        });
+      res.status(500).json({
+        message: "Failed to fetch approval stats",
+        error: error.message,
+      });
     }
   },
 );
@@ -99,7 +100,9 @@ router.put(
       }
 
       if (String((approval as any).projectId) !== String(projectId)) {
-        return res.status(403).json({ message: "Approval does not belong to this project" });
+        return res
+          .status(403)
+          .json({ message: "Approval does not belong to this project" });
       }
 
       // FIXED: Changed "Pending" to "pending"
@@ -143,7 +146,9 @@ router.put(
       }
 
       if (String((approval as any).projectId) !== String(projectId)) {
-        return res.status(403).json({ message: "Approval does not belong to this project" });
+        return res
+          .status(403)
+          .json({ message: "Approval does not belong to this project" });
       }
 
       // FIXED: Changed "Pending" to "pending"

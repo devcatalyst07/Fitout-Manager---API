@@ -1,4 +1,4 @@
-import express from 'express';
+import express from "express";
 import { authMiddleware } from "../middleware/auth";
 import { requireProjectAccess } from "../middleware/permissions";
 import Task from "../models/Task";
@@ -131,7 +131,7 @@ router.get(
         tasksCompleted: Math.round(tasksCompletedPercent * 10) / 10,
         totalTasks,
         completedTasks,
-        openApprovals, 
+        openApprovals,
       };
 
       res.json(stats);

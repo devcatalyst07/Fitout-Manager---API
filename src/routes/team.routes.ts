@@ -1,4 +1,4 @@
-import express from 'express';
+import express from "express";
 import { authMiddleware } from "../middleware/auth";
 import {
   requirePermission,
@@ -37,12 +37,10 @@ router.get(
       res.json(teamMembers);
     } catch (error: any) {
       console.error("Get team members error:", error);
-      res
-        .status(500)
-        .json({
-          message: "Failed to fetch team members",
-          error: error.message,
-        });
+      res.status(500).json({
+        message: "Failed to fetch team members",
+        error: error.message,
+      });
     }
   },
 );

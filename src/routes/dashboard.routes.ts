@@ -1,4 +1,4 @@
-import express from 'express';
+import express from "express";
 import { authMiddleware } from "../middleware/auth";
 import Project from "../models/Projects";
 import Task from "../models/Task";

@@ -1,4 +1,4 @@
-import express from 'express';
+import express from "express";
 import { authMiddleware } from "../middleware/auth";
 import { requireProjectAccess } from "../middleware/permissions";
 import ProjectActivity from "../models/ProjectActivity";

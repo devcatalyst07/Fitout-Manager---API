@@ -7,9 +7,15 @@ import TeamMember from "../models/TeamMember";
 
 const router = express.Router();
 
-const hasProjectAccess = async (user: any, projectId: string): Promise<boolean> => {
+const hasProjectAccess = async (
+  user: any,
+  projectId: string,
+): Promise<boolean> => {
   if (user.role === "admin") {
-    const owned = await Project.findOne({ _id: projectId, userId: user.id }).select("_id");
+    const owned = await Project.findOne({
+      _id: projectId,
+      userId: user.id,
+    }).select("_id");
     return !!owned;
   }
 
@@ -56,9 +62,14 @@ router.get(
         return res.status(404).json({ message: "Event not found" });
       }
 
-      const access = await hasProjectAccess(req.user, String((event as any).projectId));
+      const access = await hasProjectAccess(
+        req.user,
+        String((event as any).projectId),
+      );
       if (!access) {
-        return res.status(403).json({ message: "Not authorized to access this event" });
+        return res
+          .status(403)
+          .json({ message: "Not authorized to access this event" });
       }
 
       res.json(event);
@@ -131,9 +142,14 @@ router.put(
         return res.status(404).json({ message: "Event not found" });
       }
 
-      const access = await hasProjectAccess(req.user, String((existingEvent as any).projectId));
+      const access = await hasProjectAccess(
+        req.user,
+        String((existingEvent as any).projectId),
+      );
       if (!access) {
-        return res.status(403).json({ message: "Not authorized to update this event" });
+        return res
+          .status(403)
+          .json({ message: "Not authorized to update this event" });
       }
 
       const event = await CalendarEvent.findByIdAndUpdate(
@@ -165,9 +181,14 @@ router.delete(
         return res.status(404).json({ message: "Event not found" });
       }
 
-      const access = await hasProjectAccess(req.user, String((existingEvent as any).projectId));
+      const access = await hasProjectAccess(
+        req.user,
+        String((existingEvent as any).projectId),
+      );
       if (!access) {
-        return res.status(403).json({ message: "Not authorized to delete this event" });
+        return res
+          .status(403)
+          .json({ message: "Not authorized to delete this event" });
       }
 
       const event = await CalendarEvent.findByIdAndDelete(req.params.eventId);

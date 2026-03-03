@@ -1,4 +1,4 @@
-import express from 'express';
+import express from "express";
 import { authMiddleware } from "../middleware/auth";
 import Project from "../models/Projects";
 import Task from "../models/Task";
@@ -54,43 +54,49 @@ router.get(
 // GET /api/reports/brands - Get all brands for reports
 // ✅ UPDATED: Filter based on user role
 // ============================================
-router.get("/reports/brands", authMiddleware, async (req: express.Request, res: express.Response) => {
-  try {
-    let brandFilter: any = { isActive: true };
+router.get(
+  "/reports/brands",
+  authMiddleware,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      let brandFilter: any = { isActive: true };
 
-    let projects: any[] = [];
-    if (req.user!.role === "admin") {
-      projects = await Project.find({ userId: req.user!.id }).select("brand");
-    } else {
-      // User sees only brands from their assigned projects
-      const TeamMember = require("../models/TeamMember").default;
-      const teamMembers = await TeamMember.find({
-        userId: req.user!.id,
-        status: "active",
-      });
+      let projects: any[] = [];
+      if (req.user!.role === "admin") {
+        projects = await Project.find({ userId: req.user!.id }).select("brand");
+      } else {
+        // User sees only brands from their assigned projects
+        const TeamMember = require("../models/TeamMember").default;
+        const teamMembers = await TeamMember.find({
+          userId: req.user!.id,
+          status: "active",
+        });
 
-      const projectIds = teamMembers.map((tm: any) => tm.projectId);
+        const projectIds = teamMembers.map((tm: any) => tm.projectId);
 
-      if (projectIds.length === 0) {
-        return res.json([]);
+        if (projectIds.length === 0) {
+          return res.json([]);
+        }
+
+        projects = await Project.find({ _id: { $in: projectIds } }).select(
+          "brand",
+        );
       }
 
-      projects = await Project.find({ _id: { $in: projectIds } }).select("brand");
-    }
+      const visibleBrands = [...new Set(projects.map((p: any) => p.brand))];
+      brandFilter.name = { $in: visibleBrands };
+      if (req.user!.role === "admin") {
+        brandFilter.createdBy = req.user!.id;
+      }
 
-    const visibleBrands = [...new Set(projects.map((p: any) => p.brand))];
-    brandFilter.name = { $in: visibleBrands };
-    if (req.user!.role === "admin") {
-      brandFilter.createdBy = req.user!.id;
+      const brands = await Brand.find(brandFilter).select("name");
+      res.json(brands);
+    } catch (error) {
+      console.error("Get brands for reports error:", error);
+      res.status(500).json({ message: "Failed to fetch brands" });
     }
-
-    const brands = await Brand.find(brandFilter).select("name");
-    res.json(brands);
-  } catch (error) {
-    console.error("Get brands for reports error:", error);
-    res.status(500).json({ message: "Failed to fetch brands" });
-  }
-});
+  },
+);
 
 // ============================================
 // GET /api/reports/portfolio/csv - Generate Portfolio CSV Report
@@ -615,7 +621,10 @@ router.get(
             .json({ message: "Not authorized to access this project" });
         }
       } else {
-        const ownedProject = await Project.findOne({ _id: projectId, userId: req.user!.id });
+        const ownedProject = await Project.findOne({
+          _id: projectId,
+          userId: req.user!.id,
+        });
         if (!ownedProject) {
           return res
             .status(403)
@@ -749,7 +758,10 @@ router.get(
             .json({ message: "Not authorized to access this project" });
         }
       } else {
-        const ownedProject = await Project.findOne({ _id: projectId, userId: req.user!.id });
+        const ownedProject = await Project.findOne({
+          _id: projectId,
+          userId: req.user!.id,
+        });
         if (!ownedProject) {
           return res
             .status(403)
