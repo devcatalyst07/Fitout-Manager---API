@@ -39,7 +39,7 @@ const BudgetItemSchema = new Schema(
 
     createdBy: { type: Schema.Types.ObjectId, ref: "User" },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 BudgetItemSchema.index({ projectId: 1, category: 1 });
