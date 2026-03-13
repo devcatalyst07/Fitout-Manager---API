@@ -202,8 +202,9 @@ router.post(
         "name email",
       );
 
-      const activityLog = await ActivityLog.findById(createdActivityLog._id)
-        .populate("userId", "name email");
+      const activityLog = await ActivityLog.findById(
+        createdActivityLog._id,
+      ).populate("userId", "name email");
 
       if (populatedComment) {
         sendTaskEvent(taskId, "task:comment:new", {

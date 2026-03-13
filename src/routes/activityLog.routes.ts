@@ -40,12 +40,10 @@ router.get(
       res.json(formattedLogs);
     } catch (error: any) {
       console.error("Get activity logs error:", error);
-      res
-        .status(500)
-        .json({
-          message: "Failed to fetch activity logs",
-          error: error.message,
-        });
+      res.status(500).json({
+        message: "Failed to fetch activity logs",
+        error: error.message,
+      });
     }
   },
 );

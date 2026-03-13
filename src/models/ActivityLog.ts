@@ -72,7 +72,7 @@ const ActivityLogSchema: Schema = new Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 ActivityLogSchema.index({ taskId: 1, commentId: 1 });
