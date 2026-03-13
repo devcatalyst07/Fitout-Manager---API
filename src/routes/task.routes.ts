@@ -10,6 +10,7 @@ import Project from "../models/Projects";
 import ActivityLog from "../models/ActivityLog";
 import { activityHelpers } from "../utils/activityLogger";
 import mongoose from "mongoose";
+import { buildTaskUpdateMessage } from "../utils/notificationMessageBuilders";
 
 const router = express.Router();
 
@@ -401,6 +402,16 @@ router.post(
         description: `${req.user!.name || "User"} created task "${title}"`,
       });
 
+      await activityHelpers.taskCreated(
+        projectId,
+        req.user!.id,
+        req.user!.name || "User",
+        title,
+        newTask._id.toString(),
+        assignees.map((assignee: { email: string }) => assignee.email),
+        req.user!.email,
+      );
+
       res.status(201).json({
         message: "Task created successfully",
         task: populatedTask,
@@ -491,6 +502,8 @@ router.put(
       }
 
       // Log phase change
+      let oldPhaseName: string | null = null;
+      let newPhaseName: string | null = null;
       if (oldTask.phaseId?.toString() !== updatedTask.phaseId?.toString()) {
         const oldPhase = oldTask.phaseId
           ? await Phase.findById(oldTask.phaseId)
@@ -498,6 +511,9 @@ router.put(
         const newPhase = updatedTask.phaseId
           ? await Phase.findById(updatedTask.phaseId)
           : null;
+
+        oldPhaseName = oldPhase?.name || "Unassigned";
+        newPhaseName = newPhase?.name || "Unassigned";
 
         await ActivityLog.create({
           taskId,
@@ -512,6 +528,16 @@ router.put(
         });
       }
 
+      const taskUpdateMessage = buildTaskUpdateMessage(
+        req.user!.name || "User",
+        oldTask.toObject(),
+        updatedTask.toObject(),
+        {
+          oldPhaseName,
+          newPhaseName,
+        },
+      );
+
       if (oldTask?.status !== "Done" && updatedTask.status === "Done") {
         await activityHelpers.taskCompleted(
           req.params.projectId,
@@ -519,6 +545,20 @@ router.put(
           req.user!.name || "User",
           updatedTask.title,
           taskId,
+          updatedTask.assignees.map((assignee) => assignee.email),
+          req.user!.email,
+          taskUpdateMessage,
+        );
+      } else {
+        await activityHelpers.taskUpdated(
+          req.params.projectId,
+          req.user!.id,
+          req.user!.name || "User",
+          updatedTask.title,
+          taskId,
+          updatedTask.assignees.map((assignee) => assignee.email),
+          req.user!.email,
+          taskUpdateMessage,
         );
       }
 
@@ -552,6 +592,15 @@ router.delete(
       if (!deletedTask) {
         return res.status(404).json({ message: "Task not found" });
       }
+
+      await activityHelpers.taskDeleted(
+        req.params.projectId,
+        req.user!.id,
+        req.user!.name || "User",
+        deletedTask.title,
+        deletedTask.assignees.map((assignee) => assignee.email),
+        req.user!.email,
+      );
 
       res.json({ message: "Task deleted successfully" });
     } catch (error: any) {

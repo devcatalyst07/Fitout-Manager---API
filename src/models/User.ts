@@ -16,6 +16,7 @@ export interface IUser extends Document {
   lastName?: string;
   username?: string;
   profilePhoto?: string;
+  notificationToastEnabled?: boolean;
 
   // Role request tracking
   roleRequestPending?: boolean;
@@ -96,6 +97,10 @@ const userSchema = new Schema<IUser>(
     profilePhoto: {
       type: String,
       default: "",
+    },
+    notificationToastEnabled: {
+      type: Boolean,
+      default: true,
     },
 
     // Role request tracking

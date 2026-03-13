@@ -6,6 +6,7 @@ import BudgetItem from "../models/BudgetItem";
 import Project from "../models/Projects";
 import Approval from "../models/Approval";
 import { activityHelpers } from "../utils/activityLogger";
+import { buildBudgetUpdateMessage } from "../utils/notificationMessageBuilders";
 
 const router = express.Router();
 
@@ -165,12 +166,10 @@ router.get(
       });
     } catch (error: any) {
       console.error("Get budget stats error:", error);
-      res
-        .status(500)
-        .json({
-          message: "Failed to fetch budget statistics",
-          error: error.message,
-        });
+      res.status(500).json({
+        message: "Failed to fetch budget statistics",
+        error: error.message,
+      });
     }
   },
 );
@@ -244,6 +243,7 @@ router.post(
         req.user!.name || "Admin",
         quantity * unitCost,
         category,
+        req.user!.email,
       );
 
       res.status(201).json({
@@ -252,12 +252,10 @@ router.post(
       });
     } catch (error: any) {
       console.error("Create budget item error:", error);
-      res
-        .status(500)
-        .json({
-          message: "Failed to create budget item",
-          error: error.message,
-        });
+      res.status(500).json({
+        message: "Failed to create budget item",
+        error: error.message,
+      });
     }
   },
 );
@@ -273,6 +271,11 @@ router.put(
       const { projectId, itemId } = req.params;
       const updateData = req.body;
 
+      const existingItem = await BudgetItem.findById(itemId);
+      if (!existingItem) {
+        return res.status(404).json({ message: "Budget item not found" });
+      }
+
       const updatedItem = await BudgetItem.findByIdAndUpdate(
         itemId,
         updateData,
@@ -282,6 +285,12 @@ router.put(
       if (!updatedItem) {
         return res.status(404).json({ message: "Budget item not found" });
       }
+
+      const budgetUpdateMessage = buildBudgetUpdateMessage(
+        req.user!.name || "Admin",
+        existingItem.toObject(),
+        updatedItem.toObject(),
+      );
 
       // Update project spent amount
       const project = await Project.findById(projectId);
@@ -302,18 +311,26 @@ router.put(
         }
       }
 
+      await activityHelpers.budgetUpdated(
+        projectId,
+        req.user!.id,
+        req.user!.name || "Admin",
+        updatedItem.quantity * updatedItem.unitCost,
+        updatedItem.category,
+        req.user!.email,
+        budgetUpdateMessage,
+      );
+
       res.json({
         message: "Budget item updated successfully",
         budgetItem: updatedItem,
       });
     } catch (error: any) {
       console.error("Update budget item error:", error);
-      res
-        .status(500)
-        .json({
-          message: "Failed to update budget item",
-          error: error.message,
-        });
+      res.status(500).json({
+        message: "Failed to update budget item",
+        error: error.message,
+      });
     }
   },
 );
@@ -351,15 +368,22 @@ router.delete(
         await project.save();
       }
 
+      await activityHelpers.budgetDeleted(
+        projectId,
+        req.user!.id,
+        req.user!.name || "Admin",
+        deletedItem.category,
+        req.user!.email,
+        `${req.user!.name || "Admin"} deleted budget item "${deletedItem.description}" from ${deletedItem.category}.`,
+      );
+
       res.json({ message: "Budget item deleted successfully" });
     } catch (error: any) {
       console.error("Delete budget item error:", error);
-      res
-        .status(500)
-        .json({
-          message: "Failed to delete budget item",
-          error: error.message,
-        });
+      res.status(500).json({
+        message: "Failed to delete budget item",
+        error: error.message,
+      });
     }
   },
 );
