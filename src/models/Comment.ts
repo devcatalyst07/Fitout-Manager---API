@@ -5,7 +5,7 @@ export interface IComment extends Document {
   userId: mongoose.Types.ObjectId;
   userName: string;
   userEmail: string;
-  comment: string;
+  comment?: string;
   attachments: {
     fileName: string;
     fileUrl: string;
@@ -39,7 +39,9 @@ const CommentSchema: Schema = new Schema(
     },
     comment: {
       type: String,
-      required: true,
+      required: false,
+      default: "",
+      trim: true,
     },
     attachments: [
       {
@@ -52,7 +54,7 @@ const CommentSchema: Schema = new Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 export default mongoose.model<IComment>("Comment", CommentSchema);

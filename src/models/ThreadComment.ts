@@ -1,8 +1,8 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import mongoose, { Schema, Document } from "mongoose";
 
 export interface IThreadComment extends Document {
   threadId: mongoose.Types.ObjectId;
-  content: string;
+  content?: string;
   createdBy: mongoose.Types.ObjectId;
   createdByName: string;
   createdByEmail: string;
@@ -22,16 +22,18 @@ const ThreadCommentSchema: Schema = new Schema(
   {
     threadId: {
       type: Schema.Types.ObjectId,
-      ref: 'Thread',
+      ref: "Thread",
       required: true,
     },
     content: {
       type: String,
-      required: true,
+      required: false,
+      default: "",
+      trim: true,
     },
     createdBy: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
     },
     createdByName: {
@@ -54,17 +56,20 @@ const ThreadCommentSchema: Schema = new Schema(
     likes: [
       {
         type: Schema.Types.ObjectId,
-        ref: 'User',
+        ref: "User",
       },
     ],
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Index for efficient queries
 ThreadCommentSchema.index({ threadId: 1, createdAt: 1 });
 ThreadCommentSchema.index({ createdBy: 1 });
 
-export default mongoose.model<IThreadComment>('ThreadComment', ThreadCommentSchema);
+export default mongoose.model<IThreadComment>(
+  "ThreadComment",
+  ThreadCommentSchema,
+);

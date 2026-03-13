@@ -11,6 +11,12 @@ import ActivityLog from "../models/ActivityLog";
 import { activityHelpers } from "../utils/activityLogger";
 import mongoose from "mongoose";
 import { buildTaskUpdateMessage } from "../utils/notificationMessageBuilders";
+import {
+  addTaskClient,
+  removeTaskClient,
+  sendTaskEvent,
+  sendTaskHeartbeat,
+} from "../services/taskRealtimeService";
 
 const router = express.Router();
 
@@ -261,6 +267,54 @@ router.get(
   },
 );
 
+// GET task realtime stream (comments/activity)
+router.get(
+  "/:projectId/tasks/:taskId/stream",
+  authMiddleware,
+  requireProjectAccess,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { projectId, taskId } = req.params;
+
+      const task = await Task.findOne({
+        _id: taskId,
+        projectId,
+        isTemplate: false,
+      }).select("_id");
+
+      if (!task) {
+        return res.status(404).json({ message: "Task not found" });
+      }
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+
+      addTaskClient(taskId, res);
+
+      sendTaskEvent(taskId, "task:connected", {
+        type: "connected",
+      });
+
+      const heartbeatInterval = setInterval(() => {
+        sendTaskHeartbeat(taskId);
+      }, 25000);
+
+      req.on("close", () => {
+        clearInterval(heartbeatInterval);
+        removeTaskClient(taskId, res);
+      });
+    } catch (error: any) {
+      console.error("Project task realtime stream error:", error);
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: error.message || "Failed to open task stream",
+        });
+      }
+    }
+  },
+);
+
 // GET task statistics
 router.get(
   "/:projectId/tasks/stats/overview",
@@ -393,7 +447,7 @@ router.post(
         .populate("projectId", "projectName")
         .populate("phaseId", "name order");
 
-      await ActivityLog.create({
+      const createdActivityLog = await ActivityLog.create({
         taskId: newTask._id,
         userId: req.user!.id,
         userName: req.user!.name || "Unknown",
@@ -401,6 +455,38 @@ router.post(
         action: "created",
         description: `${req.user!.name || "User"} created task "${title}"`,
       });
+
+      const populatedCreatedActivityLog = await ActivityLog.findById(
+        createdActivityLog._id,
+      ).populate("userId", "name email");
+
+      if (populatedCreatedActivityLog) {
+        sendTaskEvent(newTask._id.toString(), "task:activity:new", {
+          type: "activity:new",
+          activity: {
+            _id: populatedCreatedActivityLog._id,
+            taskId: populatedCreatedActivityLog.taskId,
+            type: populatedCreatedActivityLog.action,
+            action: populatedCreatedActivityLog.action,
+            description: populatedCreatedActivityLog.description,
+            user: {
+              _id:
+                (populatedCreatedActivityLog.userId as any)?._id ||
+                populatedCreatedActivityLog.userId,
+              name:
+                (populatedCreatedActivityLog.userId as any)?.name ||
+                populatedCreatedActivityLog.userName ||
+                "Unknown User",
+              email:
+                (populatedCreatedActivityLog.userId as any)?.email ||
+                populatedCreatedActivityLog.userEmail ||
+                "",
+            },
+            timestamp: populatedCreatedActivityLog.createdAt,
+            createdAt: populatedCreatedActivityLog.createdAt,
+          },
+        });
+      }
 
       await activityHelpers.taskCreated(
         projectId,
@@ -474,7 +560,7 @@ router.put(
 
       // Log changes (keeping existing logging logic)
       if (oldTask.title !== updatedTask.title) {
-        await ActivityLog.create({
+        const titleActivityLog = await ActivityLog.create({
           taskId,
           userId: req.user!.id,
           userName: req.user!.name,
@@ -485,10 +571,42 @@ router.put(
           newValue: updatedTask.title,
           description: `${req.user!.name} changed title from "${oldTask.title}" to "${updatedTask.title}"`,
         });
+
+        const populatedTitleActivityLog = await ActivityLog.findById(
+          titleActivityLog._id,
+        ).populate("userId", "name email");
+
+        if (populatedTitleActivityLog) {
+          sendTaskEvent(taskId, "task:activity:new", {
+            type: "activity:new",
+            activity: {
+              _id: populatedTitleActivityLog._id,
+              taskId: populatedTitleActivityLog.taskId,
+              type: populatedTitleActivityLog.action,
+              action: populatedTitleActivityLog.action,
+              description: populatedTitleActivityLog.description,
+              user: {
+                _id:
+                  (populatedTitleActivityLog.userId as any)?._id ||
+                  populatedTitleActivityLog.userId,
+                name:
+                  (populatedTitleActivityLog.userId as any)?.name ||
+                  populatedTitleActivityLog.userName ||
+                  "Unknown User",
+                email:
+                  (populatedTitleActivityLog.userId as any)?.email ||
+                  populatedTitleActivityLog.userEmail ||
+                  "",
+              },
+              timestamp: populatedTitleActivityLog.createdAt,
+              createdAt: populatedTitleActivityLog.createdAt,
+            },
+          });
+        }
       }
 
       if (oldTask.status !== updatedTask.status) {
-        await ActivityLog.create({
+        const statusActivityLog = await ActivityLog.create({
           taskId,
           userId: req.user!.id,
           userName: req.user!.name,
@@ -499,6 +617,38 @@ router.put(
           newValue: updatedTask.status,
           description: `${req.user!.name} changed status from "${oldTask.status}" to "${updatedTask.status}"`,
         });
+
+        const populatedStatusActivityLog = await ActivityLog.findById(
+          statusActivityLog._id,
+        ).populate("userId", "name email");
+
+        if (populatedStatusActivityLog) {
+          sendTaskEvent(taskId, "task:activity:new", {
+            type: "activity:new",
+            activity: {
+              _id: populatedStatusActivityLog._id,
+              taskId: populatedStatusActivityLog.taskId,
+              type: populatedStatusActivityLog.action,
+              action: populatedStatusActivityLog.action,
+              description: populatedStatusActivityLog.description,
+              user: {
+                _id:
+                  (populatedStatusActivityLog.userId as any)?._id ||
+                  populatedStatusActivityLog.userId,
+                name:
+                  (populatedStatusActivityLog.userId as any)?.name ||
+                  populatedStatusActivityLog.userName ||
+                  "Unknown User",
+                email:
+                  (populatedStatusActivityLog.userId as any)?.email ||
+                  populatedStatusActivityLog.userEmail ||
+                  "",
+              },
+              timestamp: populatedStatusActivityLog.createdAt,
+              createdAt: populatedStatusActivityLog.createdAt,
+            },
+          });
+        }
       }
 
       // Log phase change
@@ -515,7 +665,7 @@ router.put(
         oldPhaseName = oldPhase?.name || "Unassigned";
         newPhaseName = newPhase?.name || "Unassigned";
 
-        await ActivityLog.create({
+        const phaseActivityLog = await ActivityLog.create({
           taskId,
           userId: req.user!.id,
           userName: req.user!.name,
@@ -526,6 +676,38 @@ router.put(
           newValue: newPhase?.name || "Unassigned",
           description: `${req.user!.name} moved task from "${oldPhase?.name || "Unassigned"}" to "${newPhase?.name || "Unassigned"}"`,
         });
+
+        const populatedPhaseActivityLog = await ActivityLog.findById(
+          phaseActivityLog._id,
+        ).populate("userId", "name email");
+
+        if (populatedPhaseActivityLog) {
+          sendTaskEvent(taskId, "task:activity:new", {
+            type: "activity:new",
+            activity: {
+              _id: populatedPhaseActivityLog._id,
+              taskId: populatedPhaseActivityLog.taskId,
+              type: populatedPhaseActivityLog.action,
+              action: populatedPhaseActivityLog.action,
+              description: populatedPhaseActivityLog.description,
+              user: {
+                _id:
+                  (populatedPhaseActivityLog.userId as any)?._id ||
+                  populatedPhaseActivityLog.userId,
+                name:
+                  (populatedPhaseActivityLog.userId as any)?.name ||
+                  populatedPhaseActivityLog.userName ||
+                  "Unknown User",
+                email:
+                  (populatedPhaseActivityLog.userId as any)?.email ||
+                  populatedPhaseActivityLog.userEmail ||
+                  "",
+              },
+              timestamp: populatedPhaseActivityLog.createdAt,
+              createdAt: populatedPhaseActivityLog.createdAt,
+            },
+          });
+        }
       }
 
       const taskUpdateMessage = buildTaskUpdateMessage(
