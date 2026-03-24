@@ -58,6 +58,8 @@ export interface IBudgetItem extends Document {
   awardedBidId?: mongoose.Types.ObjectId;
   isTenderSynced: boolean;
   createdBy?: mongoose.Types.ObjectId;
+  createdAt: Date;  
+  updatedAt: Date;
 }
 
 export default mongoose.model<IBudgetItem>("BudgetItem", BudgetItemSchema);

@@ -1,11 +1,7 @@
-// routes/auth.routes.ts - COMPLETE UPDATED VERSION
-// Replace your entire auth.routes.ts with this
-
 import express from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
-import nodemailer from "nodemailer";
 import User from "../models/User";
 import Notification from "../models/Notification";
 import { authMiddleware } from "../middleware/auth";
@@ -21,8 +17,11 @@ import { cacheUser, invalidateUserCache } from "../utils/cache";
 import { authRateLimiter } from "../middleware/security";
 import { cleanupUnverifiedUsers } from "../utils/cleanup";
 import { generateFingerprint } from "../middleware/security";
+import { sendEmail } from "../utils/ses";
 
 const router = express.Router();
+
+// ─── Helpers ────────────────────────────────────────────────────
 
 const generateVerificationCode = (): string =>
   Math.floor(100000 + Math.random() * 900000).toString();
@@ -34,47 +33,30 @@ const sendVerificationCodeEmail = async (
   targetEmail: string,
   name: string,
   code: string,
-) => {
-  // Check for email credentials
-  if (
-    !process.env.SMTP_HOST ||
-    !process.env.SMTP_PORT ||
-    !process.env.SMTP_USER ||
-    !process.env.SMTP_PASS
-  ) {
-    throw new Error("Email credentials are not configured");
-  }
+): Promise<void> => {
+  const appName = process.env.APP_NAME || "Fitout Manager";
 
-  const smtpPort = parseInt(process.env.SMTP_PORT, 10);
-  const smtpSecure = process.env.SMTP_SECURE === "true";
-
-  // Create transporter
-  const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: smtpPort,
-    secure: smtpSecure,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-  });
-
-  // Send email
-  await transporter.sendMail({
-    from:
-      process.env.EMAIL_FROM || '"Fitout Manager" <noreply@fitoutmanager.com>',
-    to: targetEmail,
-    subject: "Verify your Fitout Manager account",
-    html: `
-      <h2>Email Verification Code</h2>
-      <p>Hello ${name},</p>
-      <p>Use this code to verify your account:</p>
-      <p style="font-size: 28px; font-weight: bold; letter-spacing: 4px;">${code}</p>
-      <p>This code will expire in 10 minutes.</p>
-      <p>If you did not create this account, you can ignore this email.</p>
+  await sendEmail(
+    targetEmail,
+    `Verify your ${appName} account`,
+    `
+      <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto;">
+        <h2 style="color: #111;">Email Verification Code</h2>
+        <p>Hello ${name},</p>
+        <p>Use this code to verify your account:</p>
+        <p style="font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #000; margin: 24px 0;">
+          ${code}
+        </p>
+        <p style="color: #555;">This code will expire in <strong>10 minutes</strong>.</p>
+        <p style="color: #555;">If you did not create this account, you can safely ignore this email.</p>
+        <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;" />
+        <p style="color: #aaa; font-size: 12px;">${appName}</p>
+      </div>
     `,
-  });
+  );
 };
+
+// ─── Routes ─────────────────────────────────────────────────────
 
 /**
  * Register - Create new user account
@@ -144,7 +126,7 @@ router.post(
         role: accountRole,
         subscriptionType:
           accountRole === "admin" ? subscriptionType || "Starter" : "Starter",
-        tokenVersion: 0, // Initialize token version
+        tokenVersion: 0,
         emailVerified: false,
         emailVerificationCode: verificationCodeHash,
         emailVerificationExpires: verificationExpires,
@@ -168,15 +150,6 @@ router.post(
       });
     } catch (error: any) {
       console.error("Registration error:", error);
-
-      if (error?.message === "Email credentials are not configured") {
-        return res.status(500).json({
-          message:
-            "Email service is not configured. Please set SMTP credentials (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS) in backend environment.",
-          code: "EMAIL_SERVICE_NOT_CONFIGURED",
-        });
-      }
-
       res.status(500).json({
         message: "Registration failed",
         code: "REGISTRATION_ERROR",
@@ -242,8 +215,7 @@ router.post(
         });
       }
 
-      // 🆕 CHECK: Regular users MUST have a role assigned to login
-      // Admins can always login
+      // Regular users MUST have a role assigned
       if (user.role === "user" && !user.roleId) {
         return res.status(403).json({
           message:
@@ -324,7 +296,6 @@ router.post(
 
 /**
  * Refresh - Get new access token using refresh token
- * CORRECTED: Now reuses existing session ID
  */
 router.post("/refresh", async (req: express.Request, res: express.Response) => {
   try {
@@ -342,7 +313,6 @@ router.post("/refresh", async (req: express.Request, res: express.Response) => {
     try {
       payload = verifyRefreshToken(refreshToken);
     } catch (error) {
-      // Clear invalid refresh token cookie
       res.clearCookie(securityConfig.cookies.refresh.name, {
         httpOnly: true,
         secure: securityConfig.cookies.refresh.secure,
@@ -361,7 +331,6 @@ router.post("/refresh", async (req: express.Request, res: express.Response) => {
     const user = await User.findById(payload.id).select("-password");
 
     if (!user) {
-      // Clear cookies for non-existent user
       res.clearCookie(securityConfig.cookies.session.name);
       res.clearCookie(securityConfig.cookies.refresh.name, {
         path: "/api/auth",
@@ -378,7 +347,6 @@ router.post("/refresh", async (req: express.Request, res: express.Response) => {
       user.tokenVersion !== undefined &&
       payload.tokenVersion !== user.tokenVersion
     ) {
-      // Token version mismatch - all sessions have been revoked
       res.clearCookie(securityConfig.cookies.session.name);
       res.clearCookie(securityConfig.cookies.refresh.name, {
         path: "/api/auth",
@@ -390,10 +358,8 @@ router.post("/refresh", async (req: express.Request, res: express.Response) => {
       });
     }
 
-    // ⚠️ ROLE REVOCATION CHECK: Only trigger if user PREVIOUSLY had a role
-    // If they never had a role (both undefined/null), this is normal
+    // Role revocation check
     if (payload.roleId && !user.roleId) {
-      // User had a role but it was removed — invalidate session
       console.log(
         `🚫 Role removed from user ${user.email} — invalidating refresh token`,
       );
@@ -407,28 +373,25 @@ router.post("/refresh", async (req: express.Request, res: express.Response) => {
         path: securityConfig.cookies.refresh.path,
       });
 
-      // Send special error code so frontend knows role was revoked
       return res.status(401).json({
         message: "Your role access has been revoked",
         code: "ROLE_REVOKED",
       });
     }
 
-    // FIXED: Reuse existing session ID from refresh token
-    // This maintains session continuity across token refreshes
+    // Reuse existing session ID
     const existingSessionId = payload.sessionId;
 
-    // Generate new access token with SAME session ID
+    // Generate new access token with same session ID
     const newAccessToken = generateAccessToken({
       id: user._id.toString(),
       email: user.email,
       role: user.role,
       name: user.name,
       roleId: user.roleId?.toString(),
-      sessionId: existingSessionId, // Reuse existing session ID
+      sessionId: existingSessionId,
     });
 
-    // Set new access token cookie
     res.cookie(securityConfig.cookies.session.name, newAccessToken, {
       httpOnly: true,
       secure: securityConfig.cookies.session.secure,
@@ -437,7 +400,6 @@ router.post("/refresh", async (req: express.Request, res: express.Response) => {
       domain: securityConfig.cookies.session.domain,
     });
 
-    // Update user cache with fresh data
     await cacheUser(user._id.toString(), {
       id: user._id.toString(),
       email: user.email,
@@ -518,7 +480,6 @@ router.post(
   authMiddleware,
   async (req: express.Request, res: express.Response) => {
     try {
-      // Clear session cookie
       res.clearCookie(securityConfig.cookies.session.name, {
         httpOnly: true,
         secure: securityConfig.cookies.session.secure,
@@ -526,7 +487,6 @@ router.post(
         domain: securityConfig.cookies.session.domain,
       });
 
-      // Clear refresh cookie
       res.clearCookie(securityConfig.cookies.refresh.name, {
         httpOnly: true,
         secure: securityConfig.cookies.refresh.secure,
@@ -535,12 +495,10 @@ router.post(
         path: securityConfig.cookies.refresh.path,
       });
 
-      // Clear CSRF token from memory
       if (req.user) {
         clearCsrfToken((req.user as any).id);
       }
 
-      // Invalidate user cache
       if (req.user) {
         await invalidateUserCache(req.user.id);
       }
@@ -573,12 +531,10 @@ router.post(
         });
       }
 
-      // Increment token version to invalidate all refresh tokens
       await User.findByIdAndUpdate(req.user.id, {
         $inc: { tokenVersion: 1 },
       });
 
-      // Clear session cookie
       res.clearCookie(securityConfig.cookies.session.name, {
         httpOnly: true,
         secure: securityConfig.cookies.session.secure,
@@ -586,7 +542,6 @@ router.post(
         domain: securityConfig.cookies.session.domain,
       });
 
-      // Clear refresh cookie
       res.clearCookie(securityConfig.cookies.refresh.name, {
         httpOnly: true,
         secure: securityConfig.cookies.refresh.secure,
@@ -595,10 +550,7 @@ router.post(
         path: securityConfig.cookies.refresh.path,
       });
 
-      // Clear CSRF token
       clearCsrfToken(req.user.id);
-
-      // Invalidate user cache
       await invalidateUserCache(req.user.id);
 
       console.log("User logged out from all devices:", req.user.email);
@@ -734,15 +686,6 @@ router.post(
       });
     } catch (error: any) {
       console.error("Resend verification code error:", error);
-
-      if (error?.message === "Email credentials are not configured") {
-        return res.status(500).json({
-          message:
-            "Email service is not configured. Please set SMTP credentials (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS) in backend environment.",
-          code: "EMAIL_SERVICE_NOT_CONFIGURED",
-        });
-      }
-
       return res.status(500).json({
         message: "Failed to resend verification code",
         code: "RESEND_VERIFICATION_ERROR",
@@ -752,7 +695,7 @@ router.post(
 );
 
 /**
- * Request Role - Send role request email to admin
+ * Request Role - Send role request notification to admin
  */
 router.post(
   "/request-role",
@@ -760,7 +703,6 @@ router.post(
     try {
       const { adminEmail, userEmail } = req.body;
 
-      // Validation
       if (!adminEmail) {
         return res.status(400).json({
           message: "Admin email is required",
@@ -779,7 +721,6 @@ router.post(
         });
       }
 
-      // Get user
       const user = await User.findOne({ email: requesterEmail });
       if (!user) {
         return res.status(404).json({
@@ -790,13 +731,11 @@ router.post(
 
       if (!user.emailVerified) {
         return res.status(403).json({
-          message:
-            "Please verify your email before requesting role assignment.",
+          message: "Please verify your email before requesting role assignment.",
           code: "EMAIL_NOT_VERIFIED",
         });
       }
 
-      // Check if user already has a role assigned
       if (user.roleId) {
         return res.status(400).json({
           message: "User already has a role assigned",
@@ -812,13 +751,10 @@ router.post(
 
       console.log("✅ User updated with role request info:", user.email);
 
-      // Find admin user to create notification
+      // Find admin and create in-app notification
       const adminUser = await User.findOne({ email: adminEmail.toLowerCase() });
 
       if (adminUser) {
-        console.log("✅ Admin user found:", adminUser.email);
-
-        // Create notification for admin
         try {
           const notification = await Notification.create({
             type: "role_request",
@@ -835,77 +771,57 @@ router.post(
               subscriptionType: user.subscriptionType || "Starter",
             },
           });
-
-          console.log(
-            "✅ Notification created successfully:",
-            notification._id,
-          );
+          console.log("✅ Notification created:", notification._id);
         } catch (notifError: any) {
-          console.error(
-            "❌ Failed to create notification:",
-            notifError.message,
-          );
-          console.error("Notification error details:", notifError);
-          // Don't fail the request if notification fails
+          console.error("❌ Failed to create notification:", notifError.message);
         }
-      } else {
-        console.log("⚠️ Admin user not found in database:", adminEmail);
       }
 
-      // Try to send email notification (optional - won't fail if email not configured)
+      // Send email notification to admin via SES
       try {
-        // Only attempt to send email if email credentials are configured
-        if (process.env.EMAIL_USER && process.env.EMAIL_PASSWORD) {
-          const nodemailer = require("nodemailer");
+        const appName = process.env.APP_NAME || "Fitout Manager";
+        const dashboardUrl = `${process.env.APP_URL || "http://localhost:3000"}/admin/dashboard`;
 
-          // Create transporter - using environment variables
-          const transporter = nodemailer.createTransport({
-            service: process.env.EMAIL_SERVICE || "gmail",
-            auth: {
-              user: process.env.EMAIL_USER,
-              pass: process.env.EMAIL_PASSWORD,
-            },
-          });
-
-          // Email content
-          const emailContent = `
-            <h2>Role Assignment Request</h2>
-            <p>A new user has requested role assignment:</p>
-            <ul>
-              <li><strong>Name:</strong> ${user.name}</li>
-              <li><strong>Email:</strong> ${user.email}</li>
-              <li><strong>Requested At:</strong> ${new Date().toLocaleString()}</li>
-              <li><strong>Subscription Type:</strong> ${user.subscriptionType || "Starter"}</li>
-            </ul>
-            <p>Please log in to the admin dashboard to review and assign an appropriate role.</p>
-            <p>
-              <a href="${process.env.ADMIN_DASHBOARD_URL || "http://localhost:3000/admin/dashboard"}" 
-                 style="background-color: #000; color: #fff; padding: 10px 20px; text-decoration: none; display: inline-block; border-radius: 4px;">
+        await sendEmail(
+          adminEmail,
+          `Role Assignment Request from ${user.name} — ${appName}`,
+          `
+            <div style="font-family: Arial, sans-serif; max-width: 520px; margin: 0 auto;">
+              <h2 style="color: #111;">Role Assignment Request</h2>
+              <p>A new user has requested role assignment:</p>
+              <table style="border-collapse: collapse; width: 100%; margin: 16px 0;">
+                <tr>
+                  <td style="padding: 8px; border: 1px solid #eee; font-weight: bold;">Name</td>
+                  <td style="padding: 8px; border: 1px solid #eee;">${user.name}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px; border: 1px solid #eee; font-weight: bold;">Email</td>
+                  <td style="padding: 8px; border: 1px solid #eee;">${user.email}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px; border: 1px solid #eee; font-weight: bold;">Requested At</td>
+                  <td style="padding: 8px; border: 1px solid #eee;">${new Date().toLocaleString()}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px; border: 1px solid #eee; font-weight: bold;">Subscription</td>
+                  <td style="padding: 8px; border: 1px solid #eee;">${user.subscriptionType || "Starter"}</td>
+                </tr>
+              </table>
+              <p>Please log in to the admin dashboard to review and assign a role.</p>
+              <a href="${dashboardUrl}"
+                 style="display: inline-block; background: #000; color: #fff; padding: 12px 24px;
+                        text-decoration: none; border-radius: 6px; margin-top: 8px;">
                 View Access Control
               </a>
-            </p>
-          `;
-
-          // Send email
-          await transporter.sendMail({
-            from: process.env.EMAIL_USER,
-            to: adminEmail,
-            subject: `Role Assignment Request from ${user.name}`,
-            html: emailContent,
-          });
-
-          console.log("📧 Email sent to:", adminEmail);
-        } else {
-          console.log(
-            "📧 Email credentials not configured, skipping email notification",
-          );
-        }
-      } catch (emailError: any) {
-        // Email failed but request was still successful (notification was created)
-        console.error(
-          "⚠️ Email send failed (but request still processed):",
-          emailError.message,
+              <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;" />
+              <p style="color: #aaa; font-size: 12px;">${appName}</p>
+            </div>
+          `,
         );
+
+        console.log("📧 Role request email sent to:", adminEmail);
+      } catch (emailError: any) {
+        console.error("⚠️ Email send failed (request still processed):", emailError.message);
       }
 
       res.json({
@@ -917,8 +833,6 @@ router.post(
       });
     } catch (error: any) {
       console.error("❌ Request role error:", error);
-      console.error("Error stack:", error.stack);
-      console.error("Error details:", JSON.stringify(error, null, 2));
       res.status(500).json({
         message: "Failed to send role request",
         code: "REQUEST_ROLE_ERROR",
@@ -932,14 +846,11 @@ router.post(
 
 /**
  * Cleanup endpoint for unverified users
- * Can be called manually or via Vercel Cron Jobs
- * For security, should require an API key in production
  */
 router.post(
   "/cleanup-unverified",
   async (req: express.Request, res: express.Response) => {
     try {
-      // Optional: Add API key check for security
       const apiKey = req.headers["x-api-key"];
       if (
         process.env.NODE_ENV === "production" &&

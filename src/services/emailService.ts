@@ -1,273 +1,119 @@
-import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
+import {
+  SESClient,
+  SendEmailCommand,
+  SendEmailCommandInput,
+} from "@aws-sdk/client-ses";
 
-const ses = new SESClient({
-  region: process.env.AWS_SES_REGION || 'us-east-1',
+const sesClient = new SESClient({
+  region: process.env.AWS_SES_REGION || "us-east-1",
   credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
   },
 });
 
-const FROM_EMAIL = process.env.SES_FROM_EMAIL || 'noreply@yourdomain.com';
-const APP_NAME = process.env.APP_NAME || 'FitOut Manager';
-const APP_URL = process.env.APP_URL || 'http://localhost:3000';
+const FROM_EMAIL      = process.env.SES_FROM_EMAIL!;
+export const APP_NAME = process.env.APP_NAME || "Fitout Manager";
+export const APP_URL  = process.env.APP_URL  || "";
 
-interface SendEmailParams {
-  to: string;
-  subject: string;
-  html: string;
-  text?: string;
-}
+// ─── Low-level send helper ───────────────────────────────────────
+// Supports both positional args AND object form used by reminderService
 
-export async function sendEmail({ to, subject, html, text }: SendEmailParams): Promise<boolean> {
+export async function sendEmail(
+  toOrOptions:
+    | string
+    | string[]
+    | { to: string; subject: string; html: string; text: string },
+  subject?: string,
+  htmlBody?: string,
+  textBody?: string,
+): Promise<void> {
+  let toAddresses: string[];
+  let finalSubject: string;
+  let finalHtml: string;
+  let finalText: string;
+
+  if (
+    typeof toOrOptions === "object" &&
+    !Array.isArray(toOrOptions) &&
+    "to" in toOrOptions
+  ) {
+    // Object form: sendEmail({ to, subject, html, text })
+    toAddresses  = [toOrOptions.to];
+    finalSubject = toOrOptions.subject;
+    finalHtml    = toOrOptions.html;
+    finalText    = toOrOptions.text;
+  } else {
+    // Positional form: sendEmail(to, subject, html, text)
+    toAddresses  = Array.isArray(toOrOptions) ? toOrOptions : [toOrOptions as string];
+    finalSubject = subject!;
+    finalHtml    = htmlBody!;
+    finalText    = textBody!;
+  }
+
+  const params: SendEmailCommandInput = {
+    Source: `${APP_NAME} <${FROM_EMAIL}>`,
+    Destination: { ToAddresses: toAddresses },
+    Message: {
+      Subject: { Data: finalSubject, Charset: "UTF-8" },
+      Body: {
+        Html: { Data: finalHtml, Charset: "UTF-8" },
+        Text: { Data: finalText, Charset: "UTF-8" },
+      },
+    },
+  };
+
   try {
-    const command = new SendEmailCommand({
-      Source: `${APP_NAME} <${FROM_EMAIL}>`,
-      Destination: {
-        ToAddresses: [to],
-      },
-      Message: {
-        Subject: { Data: subject, Charset: 'UTF-8' },
-        Body: {
-          Html: { Data: html, Charset: 'UTF-8' },
-          ...(text ? { Text: { Data: text, Charset: 'UTF-8' } } : {}),
-        },
-      },
-    });
-
-    await ses.send(command);
-    console.log(`Email sent successfully to ${to}: ${subject}`);
-    return true;
-  } catch (error) {
-    console.error(`Failed to send email to ${to}:`, error);
-    return false;
+    const command = new SendEmailCommand(params);
+    await sesClient.send(command);
+    console.log(`[SES] Email sent to ${toAddresses.join(", ")} — "${finalSubject}"`);
+  } catch (error: any) {
+    console.error("[SES] Failed to send email:", error?.message || error);
+    throw error;
   }
 }
 
-// ==================== EMAIL TEMPLATES ====================
+// ─── Shared HTML wrapper ─────────────────────────────────────────
 
-function emailWrapper(content: string): string {
+export function htmlWrapper(content: string): string {
   return `
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
-    body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f4f5f7; }
-    .container { max-width: 600px; margin: 0 auto; padding: 40px 20px; }
-    .card { background: #ffffff; border-radius: 12px; padding: 40px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
-    .logo { font-size: 20px; font-weight: 700; color: #1a1a1a; margin-bottom: 24px; }
-    h1 { color: #1a1a1a; font-size: 22px; margin: 0 0 16px; }
-    h2 { color: #333; font-size: 16px; margin: 20px 0 8px; }
-    p { color: #4a4a4a; font-size: 14px; line-height: 1.6; margin: 0 0 12px; }
-    .detail-row { display: flex; padding: 8px 0; border-bottom: 1px solid #f0f0f0; font-size: 14px; }
-    .detail-label { color: #777; min-width: 140px; font-weight: 500; }
-    .detail-value { color: #1a1a1a; font-weight: 600; }
-    .btn { display: inline-block; padding: 14px 32px; background: #2563eb; color: #ffffff !important; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px; margin: 20px 0; }
-    .btn:hover { background: #1d4ed8; }
-    .info-box { background: #f0f7ff; border: 1px solid #d0e3ff; border-radius: 8px; padding: 16px; margin: 16px 0; }
-    .warning-box { background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 16px; margin: 16px 0; }
-    .footer { text-align: center; padding-top: 24px; color: #999; font-size: 12px; }
-    .divider { border: none; border-top: 1px solid #eee; margin: 24px 0; }
+    body { font-family: Arial, sans-serif; background: #f4f4f4; margin: 0; padding: 0; }
+    .container { max-width: 600px; margin: 40px auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    .header { background: #1d4ed8; padding: 28px 32px; }
+    .header h1 { color: #fff; margin: 0; font-size: 22px; }
+    .body { padding: 32px; color: #374151; line-height: 1.6; }
+    .body h2 { color: #111827; font-size: 18px; margin-top: 0; }
+    .detail-box { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 16px 20px; margin: 20px 0; }
+    .detail-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #e5e7eb; font-size: 14px; }
+    .detail-row:last-child { border-bottom: none; }
+    .detail-label { color: #6b7280; font-weight: 600; }
+    .detail-value { color: #111827; text-align: right; }
+    .btn { display: inline-block; margin-top: 24px; padding: 12px 28px; background: #1d4ed8; color: #fff !important; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 15px; }
+    .footer { padding: 20px 32px; background: #f9fafb; border-top: 1px solid #e5e7eb; font-size: 12px; color: #9ca3af; text-align: center; }
+    ul { padding-left: 20px; }
+    li { margin-bottom: 6px; font-size: 14px; }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="card">
-      <div class="logo">${APP_NAME}</div>
-      ${content}
-    </div>
-    <div class="footer">
-      <p>&copy; ${new Date().getFullYear()} ${APP_NAME}. All rights reserved.</p>
-      <p>This is an automated message. Please do not reply directly.</p>
-    </div>
+    <div class="header"><h1>${APP_NAME}</h1></div>
+    <div class="body">${content}</div>
+    <div class="footer">This is an automated message from ${APP_NAME}. Please do not reply directly to this email.</div>
   </div>
 </body>
 </html>`;
 }
 
-// ==================== TENDER INVITATION ====================
+// ─── Reminder email builder ──────────────────────────────────────
+// Matches the exact call signature in reminderService.ts
 
-interface TenderInviteData {
-  contractorName: string;
-  tenderNumber: string;
-  tenderTitle: string;
-  description?: string;
-  category: string;
-  budgetedAmount?: number;
-  submissionDeadline?: string;
-  scopeOfWorks?: string;
-  specifications?: string;
-  complianceRequirements?: string[];
-  documents?: Array<{ fileName: string; fileUrl: string }>;
-  bidSubmissionUrl: string;
-}
-
-export function buildTenderInviteEmail(data: TenderInviteData): { subject: string; html: string; text: string } {
-  const deadlineStr = data.submissionDeadline
-    ? new Date(data.submissionDeadline).toLocaleDateString('en-US', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-      })
-    : 'As specified';
-
-  let detailsHtml = `
-    <h1>You're Invited to Tender</h1>
-    <p>Dear ${data.contractorName},</p>
-    <p>You have been invited to submit a bid for the following tender. Please review the details below and submit your pricing before the deadline.</p>
-    <hr class="divider">
-    
-    <h2>Tender Details</h2>
-    <div style="margin-bottom: 16px;">
-      <div class="detail-row">
-        <span class="detail-label">Tender Number:</span>
-        <span class="detail-value">${data.tenderNumber}</span>
-      </div>
-      <div class="detail-row">
-        <span class="detail-label">Title:</span>
-        <span class="detail-value">${data.tenderTitle}</span>
-      </div>
-      <div class="detail-row">
-        <span class="detail-label">Category:</span>
-        <span class="detail-value">${data.category}</span>
-      </div>
-      <div class="detail-row">
-        <span class="detail-label">Submission Deadline:</span>
-        <span class="detail-value" style="color: #dc2626;">${deadlineStr}</span>
-      </div>
-    </div>`;
-
-  if (data.description) {
-    detailsHtml += `
-    <h2>Description</h2>
-    <p>${data.description}</p>`;
-  }
-
-  if (data.scopeOfWorks) {
-    detailsHtml += `
-    <h2>Scope of Works</h2>
-    <div class="info-box">
-      <p style="margin:0; white-space: pre-wrap;">${data.scopeOfWorks}</p>
-    </div>`;
-  }
-
-  if (data.specifications) {
-    detailsHtml += `
-    <h2>Technical Specifications</h2>
-    <div class="info-box">
-      <p style="margin:0; white-space: pre-wrap;">${data.specifications}</p>
-    </div>`;
-  }
-
-  if (data.complianceRequirements && data.complianceRequirements.length > 0) {
-    detailsHtml += `
-    <h2>Compliance Requirements</h2>
-    <ul style="color: #4a4a4a; font-size: 14px; line-height: 1.8;">
-      ${data.complianceRequirements.map(r => `<li>${r}</li>`).join('')}
-    </ul>`;
-  }
-
-  if (data.documents && data.documents.length > 0) {
-    detailsHtml += `
-    <h2>Attached Documents</h2>
-    <ul style="color: #4a4a4a; font-size: 14px; line-height: 1.8;">
-      ${data.documents.map(d => `<li><a href="${d.fileUrl}" style="color: #2563eb;">${d.fileName}</a></li>`).join('')}
-    </ul>`;
-  }
-
-  detailsHtml += `
-    <hr class="divider">
-    <p style="font-weight: 600;">Ready to submit your bid?</p>
-    <p>Click the button below to access the bid submission portal:</p>
-    <div style="text-align: center;">
-      <a href="${data.bidSubmissionUrl}" class="btn">Submit Your Bid</a>
-    </div>
-    <div class="warning-box">
-      <p style="margin: 0; font-size: 13px;"><strong>Important:</strong> Please submit your bid before <strong>${deadlineStr}</strong>. Late submissions may not be accepted. If you have questions, please submit an RFI through the portal.</p>
-    </div>
-    <p style="font-size: 12px; color: #999;">If the button above doesn't work, copy and paste this link into your browser:<br>
-    <a href="${data.bidSubmissionUrl}" style="color: #2563eb; word-break: break-all;">${data.bidSubmissionUrl}</a></p>`;
-
-  const text = `
-You're Invited to Tender
-
-Dear ${data.contractorName},
-
-You have been invited to submit a bid for:
-
-Tender Number: ${data.tenderNumber}
-Title: ${data.tenderTitle}
-Category: ${data.category}
-Submission Deadline: ${deadlineStr}
-
-${data.scopeOfWorks ? `Scope of Works:\n${data.scopeOfWorks}\n` : ''}
-
-Submit your bid here: ${data.bidSubmissionUrl}
-
-Please submit before the deadline.
-  `.trim();
-
-  return {
-    subject: `Tender Invitation: ${data.tenderNumber} - ${data.tenderTitle}`,
-    html: emailWrapper(detailsHtml),
-    text,
-  };
-}
-
-// ==================== BID CONFIRMATION ====================
-
-interface BidConfirmationData {
-  contractorName: string;
-  tenderNumber: string;
-  tenderTitle: string;
-  bidAmount: number;
-  submittedAt: string;
-}
-
-export function buildBidConfirmationEmail(data: BidConfirmationData): { subject: string; html: string; text: string } {
-  const content = `
-    <h1>Bid Received — Thank You</h1>
-    <p>Dear ${data.contractorName},</p>
-    <p>We confirm that we have received your bid submission for the following tender:</p>
-    
-    <div style="margin: 16px 0;">
-      <div class="detail-row">
-        <span class="detail-label">Tender Number:</span>
-        <span class="detail-value">${data.tenderNumber}</span>
-      </div>
-      <div class="detail-row">
-        <span class="detail-label">Tender Title:</span>
-        <span class="detail-value">${data.tenderTitle}</span>
-      </div>
-      <div class="detail-row">
-        <span class="detail-label">Your Bid Amount:</span>
-        <span class="detail-value">${formatAmount(data.bidAmount)}</span>
-      </div>
-      <div class="detail-row">
-        <span class="detail-label">Submitted At:</span>
-        <span class="detail-value">${new Date(data.submittedAt).toLocaleString('en-US')}</span>
-      </div>
-    </div>
-
-    <div class="info-box">
-      <p style="margin: 0; font-size: 13px;">Your bid is now under review. We will notify you of the outcome once the evaluation process is complete.</p>
-    </div>
-
-    <p>Thank you for your submission.</p>`;
-
-  return {
-    subject: `Bid Confirmation: ${data.tenderNumber} - ${data.tenderTitle}`,
-    html: emailWrapper(content),
-    text: `Bid Received\n\nDear ${data.contractorName},\n\nWe confirm receipt of your bid for ${data.tenderNumber} - ${data.tenderTitle}.\nBid Amount: ${formatAmount(data.bidAmount)}\n\nYour bid is now under review.`,
-  };
-}
-
-// ==================== REMINDER ====================
-
-interface ReminderData {
+export interface ReminderEmailParams {
   contractorName: string;
   tenderNumber: string;
   tenderTitle: string;
@@ -276,111 +122,390 @@ interface ReminderData {
   bidSubmissionUrl: string;
 }
 
-export function buildReminderEmail(data: ReminderData): { subject: string; html: string; text: string } {
-  const deadlineStr = new Date(data.submissionDeadline).toLocaleDateString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  });
+export function buildReminderEmail(params: ReminderEmailParams): {
+  subject: string;
+  html: string;
+  text: string;
+} {
+  const deadlineText = new Date(params.submissionDeadline).toLocaleDateString(
+    "en-US",
+    { weekday: "long", year: "numeric", month: "long", day: "numeric" },
+  );
 
-  const urgency = data.daysRemaining <= 1 ? 'FINAL REMINDER' : 'REMINDER';
+  const urgencyLabel =
+    params.daysRemaining === 1 ? "⚠️ Final Reminder" : "📅 Reminder";
 
-  const content = `
-    <h1>${urgency}: Bid Submission Due Soon</h1>
-    <p>Dear ${data.contractorName},</p>
-    <p>This is a friendly reminder that the deadline for submitting your bid is approaching.</p>
-    
-    <div class="warning-box">
-      <p style="margin: 0; font-weight: 600; color: #92400e;">
-        ⏰ ${data.daysRemaining <= 1 ? 'Tomorrow is the last day' : `${data.daysRemaining} days remaining`} to submit your bid.
-      </p>
+  const subject = `${urgencyLabel}: Bid Due in ${params.daysRemaining} Day${
+    params.daysRemaining === 1 ? "" : "s"
+  } — ${params.tenderTitle} [${params.tenderNumber}]`;
+
+  const html = htmlWrapper(`
+    <h2>${urgencyLabel}: ${params.daysRemaining} Day${params.daysRemaining === 1 ? "" : "s"} Until Bid Deadline</h2>
+    <p>Dear <strong>${params.contractorName}</strong>,</p>
+    <p>
+      This is a reminder that the submission deadline for tender
+      <strong>${params.tenderTitle}</strong> is approaching.
+      ${
+        params.daysRemaining === 1
+          ? "<strong>This is your final reminder — the deadline is tomorrow.</strong>"
+          : `You have <strong>${params.daysRemaining} days</strong> remaining to submit your bid.`
+      }
+    </p>
+    <div class="detail-box">
+      <div class="detail-row"><span class="detail-label">Tender #</span><span class="detail-value">${params.tenderNumber}</span></div>
+      <div class="detail-row"><span class="detail-label">Title</span><span class="detail-value">${params.tenderTitle}</span></div>
+      <div class="detail-row"><span class="detail-label">Deadline</span><span class="detail-value">${deadlineText}</span></div>
+      <div class="detail-row"><span class="detail-label">Days Remaining</span><span class="detail-value">${params.daysRemaining}</span></div>
     </div>
+    <p>Please submit your bid before the deadline to be considered.</p>
+    <a href="${params.bidSubmissionUrl}" class="btn">Submit Your Bid Now</a>
+  `);
 
-    <div style="margin: 16px 0;">
-      <div class="detail-row">
-        <span class="detail-label">Tender Number:</span>
-        <span class="detail-value">${data.tenderNumber}</span>
-      </div>
-      <div class="detail-row">
-        <span class="detail-label">Tender Title:</span>
-        <span class="detail-value">${data.tenderTitle}</span>
-      </div>
-      <div class="detail-row">
-        <span class="detail-label">Deadline:</span>
-        <span class="detail-value" style="color: #dc2626;">${deadlineStr}</span>
-      </div>
-    </div>
+  const text = `
+${urgencyLabel}: Bid Due in ${params.daysRemaining} Day${params.daysRemaining === 1 ? "" : "s"}
 
-    <div style="text-align: center;">
-      <a href="${data.bidSubmissionUrl}" class="btn">Submit Your Bid Now</a>
-    </div>
-    
-    <p style="font-size: 13px; color: #666;">If you have already submitted your bid, please disregard this message.</p>`;
+Dear ${params.contractorName},
 
-  return {
-    subject: `${urgency}: ${data.tenderNumber} — Bid due ${deadlineStr}`,
-    html: emailWrapper(content),
-    text: `${urgency}\n\nDear ${data.contractorName},\n\nYour bid for ${data.tenderNumber} - ${data.tenderTitle} is due on ${deadlineStr} (${data.daysRemaining} days remaining).\n\nSubmit here: ${data.bidSubmissionUrl}`,
-  };
+This is a reminder that the submission deadline for tender "${params.tenderTitle}" (${params.tenderNumber}) is approaching.
+
+Deadline: ${deadlineText}
+Days Remaining: ${params.daysRemaining}
+
+Submit your bid at: ${params.bidSubmissionUrl}
+
+This is an automated message from ${APP_NAME}.
+  `.trim();
+
+  return { subject, html, text };
 }
 
-// ==================== AWARD NOTIFICATION ====================
+// ─── 1. Tender Invitation ────────────────────────────────────────
 
-interface AwardNotificationData {
+export interface TenderInvitationData {
   contractorName: string;
+  contractorEmail: string;
   tenderNumber: string;
   tenderTitle: string;
-  awarded: boolean;
-  awardedAmount?: number;
+  projectName: string;
+  category: string;
+  budgetedAmount: number;
+  submissionDeadline?: string;
+  scopeOfWorks?: string;
+  complianceRequirements?: string[];
+}
+
+export async function sendTenderInvitation(
+  data: TenderInvitationData,
+): Promise<void> {
+  const deadlineText = data.submissionDeadline
+    ? new Date(data.submissionDeadline).toLocaleDateString("en-US", {
+        weekday: "long", year: "numeric", month: "long", day: "numeric",
+      })
+    : "To be confirmed";
+
+  const budgetFormatted = new Intl.NumberFormat("en-US", {
+    style: "currency", currency: "USD", minimumFractionDigits: 0,
+  }).format(data.budgetedAmount);
+
+  const complianceList =
+    data.complianceRequirements && data.complianceRequirements.length > 0
+      ? `<p><strong>Compliance Requirements:</strong></p><ul>${data.complianceRequirements
+          .map((r) => `<li>${r}</li>`)
+          .join("")}</ul>`
+      : "";
+
+  const viewUrl = `${APP_URL}/tender/${data.tenderNumber}`;
+
+  const html = htmlWrapper(`
+    <h2>Tender Invitation — ${data.tenderNumber}</h2>
+    <p>Dear <strong>${data.contractorName}</strong>,</p>
+    <p>You have been invited to submit a bid for the following tender on behalf of <strong>${data.projectName}</strong>.</p>
+    <div class="detail-box">
+      <div class="detail-row"><span class="detail-label">Tender #</span><span class="detail-value">${data.tenderNumber}</span></div>
+      <div class="detail-row"><span class="detail-label">Title</span><span class="detail-value">${data.tenderTitle}</span></div>
+      <div class="detail-row"><span class="detail-label">Project</span><span class="detail-value">${data.projectName}</span></div>
+      <div class="detail-row"><span class="detail-label">Category</span><span class="detail-value">${data.category}</span></div>
+      <div class="detail-row"><span class="detail-label">Budgeted Amount</span><span class="detail-value">${budgetFormatted}</span></div>
+      <div class="detail-row"><span class="detail-label">Submission Deadline</span><span class="detail-value">${deadlineText}</span></div>
+    </div>
+    ${data.scopeOfWorks ? `<p><strong>Scope of Works:</strong></p><p style="font-size:14px;color:#4b5563;">${data.scopeOfWorks}</p>` : ""}
+    ${complianceList}
+    <a href="${viewUrl}" class="btn">View Tender &amp; Submit Bid</a>
+  `);
+
+  const text = `
+Tender Invitation — ${data.tenderNumber}
+
+Dear ${data.contractorName},
+
+You have been invited to submit a bid for tender "${data.tenderTitle}" (${data.tenderNumber}).
+
+Project: ${data.projectName}
+Category: ${data.category}
+Budget: ${budgetFormatted}
+Deadline: ${deadlineText}
+
+${data.scopeOfWorks ? `Scope of Works:\n${data.scopeOfWorks}\n` : ""}
+${data.complianceRequirements?.length ? `Compliance Requirements:\n${data.complianceRequirements.map((r) => `- ${r}`).join("\n")}\n` : ""}
+
+View the tender at: ${viewUrl}
+
+This is an automated message from ${APP_NAME}.
+  `.trim();
+
+  await sendEmail(
+    data.contractorEmail,
+    `Tender Invitation: ${data.tenderTitle} [${data.tenderNumber}]`,
+    html,
+    text,
+  );
+}
+
+// ─── 2. Tender Updated Notification ─────────────────────────────
+
+export interface TenderUpdateData {
+  contractorName: string;
+  contractorEmail: string;
+  tenderNumber: string;
+  tenderTitle: string;
+  projectName: string;
+  changeDescription?: string;
+  submissionDeadline?: string;
+}
+
+export async function sendTenderUpdateNotification(
+  data: TenderUpdateData,
+): Promise<void> {
+  const deadlineText = data.submissionDeadline
+    ? new Date(data.submissionDeadline).toLocaleDateString("en-US", {
+        weekday: "long", year: "numeric", month: "long", day: "numeric",
+      })
+    : "To be confirmed";
+
+  const viewUrl = `${APP_URL}/tender/${data.tenderNumber}`;
+
+  const html = htmlWrapper(`
+    <h2>Tender Updated — ${data.tenderNumber}</h2>
+    <p>Dear <strong>${data.contractorName}</strong>,</p>
+    <p>The tender <strong>${data.tenderTitle}</strong> for project <strong>${data.projectName}</strong> has been updated.</p>
+    ${data.changeDescription ? `<div class="detail-box"><p style="margin:0;font-size:14px;"><strong>Change summary:</strong> ${data.changeDescription}</p></div>` : ""}
+    <div class="detail-box">
+      <div class="detail-row"><span class="detail-label">Tender #</span><span class="detail-value">${data.tenderNumber}</span></div>
+      <div class="detail-row"><span class="detail-label">Submission Deadline</span><span class="detail-value">${deadlineText}</span></div>
+    </div>
+    <a href="${viewUrl}" class="btn">View Updated Tender</a>
+  `);
+
+  const text = `
+Tender Updated — ${data.tenderNumber}
+
+Dear ${data.contractorName},
+
+The tender "${data.tenderTitle}" (${data.tenderNumber}) for project "${data.projectName}" has been updated.
+
+${data.changeDescription ? `Change summary: ${data.changeDescription}\n` : ""}
+Submission Deadline: ${deadlineText}
+
+View the updated tender at: ${viewUrl}
+
+This is an automated message from ${APP_NAME}.
+  `.trim();
+
+  await sendEmail(
+    data.contractorEmail,
+    `Tender Updated: ${data.tenderTitle} [${data.tenderNumber}]`,
+    html,
+    text,
+  );
+}
+
+// ─── 3. Bid Received Notification ───────────────────────────────
+
+export interface BidReceivedData {
+  adminEmail: string;
+  tenderNumber: string;
+  tenderTitle: string;
+  contractorName: string;
+  contractorCompany: string;
+  bidAmount: number;
+}
+
+export async function sendBidReceivedNotification(
+  data: BidReceivedData,
+): Promise<void> {
+  const bidFormatted = new Intl.NumberFormat("en-US", {
+    style: "currency", currency: "USD", minimumFractionDigits: 0,
+  }).format(data.bidAmount);
+
+  const html = htmlWrapper(`
+    <h2>New Bid Received — ${data.tenderNumber}</h2>
+    <p>A new bid has been submitted for tender <strong>${data.tenderTitle}</strong>.</p>
+    <div class="detail-box">
+      <div class="detail-row"><span class="detail-label">Contractor</span><span class="detail-value">${data.contractorName}</span></div>
+      <div class="detail-row"><span class="detail-label">Company</span><span class="detail-value">${data.contractorCompany}</span></div>
+      <div class="detail-row"><span class="detail-label">Bid Amount</span><span class="detail-value">${bidFormatted}</span></div>
+    </div>
+    <a href="${APP_URL}/admin/tenders/${data.tenderNumber}" class="btn">Review Bid</a>
+  `);
+
+  const text = `
+New Bid Received — ${data.tenderNumber}
+
+Tender: ${data.tenderTitle}
+Contractor: ${data.contractorName} (${data.contractorCompany})
+Bid Amount: ${bidFormatted}
+
+Review at: ${APP_URL}/admin/tenders/${data.tenderNumber}
+  `.trim();
+
+  await sendEmail(
+    data.adminEmail,
+    `New Bid: ${data.tenderTitle} — ${data.contractorName}`,
+    html,
+    text,
+  );
+}
+
+// ─── 4. Tender Awarded Notification ─────────────────────────────
+
+export interface TenderAwardedData {
+  contractorName: string;
+  contractorEmail: string;
+  tenderNumber: string;
+  tenderTitle: string;
+  projectName: string;
+  awardedAmount: number;
   awardedReason?: string;
 }
 
-export function buildAwardNotificationEmail(data: AwardNotificationData): { subject: string; html: string; text: string } {
-  const content = data.awarded
-    ? `
-    <h1>Congratulations — Tender Awarded</h1>
-    <p>Dear ${data.contractorName},</p>
-    <p>We are pleased to inform you that your bid for the following tender has been <strong>accepted</strong>:</p>
-    
-    <div style="margin: 16px 0;">
-      <div class="detail-row">
-        <span class="detail-label">Tender Number:</span>
-        <span class="detail-value">${data.tenderNumber}</span>
-      </div>
-      <div class="detail-row">
-        <span class="detail-label">Title:</span>
-        <span class="detail-value">${data.tenderTitle}</span>
-      </div>
-      ${data.awardedAmount ? `<div class="detail-row"><span class="detail-label">Awarded Amount:</span><span class="detail-value">${formatAmount(data.awardedAmount)}</span></div>` : ''}
+export async function sendTenderAwardedNotification(
+  data: TenderAwardedData,
+): Promise<void> {
+  const amountFormatted = new Intl.NumberFormat("en-US", {
+    style: "currency", currency: "USD", minimumFractionDigits: 0,
+  }).format(data.awardedAmount);
+
+  const html = htmlWrapper(`
+    <h2>🎉 Congratulations — You've Been Awarded the Tender</h2>
+    <p>Dear <strong>${data.contractorName}</strong>,</p>
+    <p>Your bid for tender <strong>${data.tenderTitle}</strong> on project <strong>${data.projectName}</strong> has been accepted.</p>
+    <div class="detail-box">
+      <div class="detail-row"><span class="detail-label">Tender #</span><span class="detail-value">${data.tenderNumber}</span></div>
+      <div class="detail-row"><span class="detail-label">Awarded Amount</span><span class="detail-value">${amountFormatted}</span></div>
     </div>
+    ${data.awardedReason ? `<p><strong>Notes from the client:</strong></p><p style="font-size:14px;color:#4b5563;">${data.awardedReason}</p>` : ""}
+    <p>Our team will be in touch shortly to proceed with the contract.</p>
+    <a href="${APP_URL}" class="btn">Go to Portal</a>
+  `);
 
-    <div class="info-box">
-      <p style="margin: 0;">Our team will be in touch shortly to proceed with the next steps.</p>
-    </div>`
-    : `
-    <h1>Tender Outcome Notification</h1>
-    <p>Dear ${data.contractorName},</p>
-    <p>Thank you for your bid submission for tender <strong>${data.tenderNumber} - ${data.tenderTitle}</strong>.</p>
-    <p>After careful evaluation, we regret to inform you that your bid was not selected on this occasion. We appreciate the time and effort you put into your submission and hope to work with you on future opportunities.</p>`;
+  const text = `
+Congratulations — Tender Awarded
 
-  return {
-    subject: data.awarded
-      ? `Tender Awarded: ${data.tenderNumber} - ${data.tenderTitle}`
-      : `Tender Outcome: ${data.tenderNumber} - ${data.tenderTitle}`,
-    html: emailWrapper(content),
-    text: data.awarded
-      ? `Congratulations! Your bid for ${data.tenderNumber} has been accepted.`
-      : `Thank you for your bid for ${data.tenderNumber}. Unfortunately, your bid was not selected.`,
-  };
+Dear ${data.contractorName},
+
+Your bid for "${data.tenderTitle}" (${data.tenderNumber}) on project "${data.projectName}" has been accepted.
+
+Awarded Amount: ${amountFormatted}
+${data.awardedReason ? `\nNotes: ${data.awardedReason}` : ""}
+
+Visit the portal at: ${APP_URL}
+  `.trim();
+
+  await sendEmail(
+    data.contractorEmail,
+    `Tender Awarded: ${data.tenderTitle} [${data.tenderNumber}]`,
+    html,
+    text,
+  );
 }
 
-function formatAmount(amount: number): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 0,
-  }).format(amount);
+// ─── 5. Bid Rejection Notification ──────────────────────────────
+
+export interface BidRejectedData {
+  contractorName: string;
+  contractorEmail: string;
+  tenderNumber: string;
+  tenderTitle: string;
+  projectName: string;
 }
 
-export { APP_URL };
+export async function sendBidRejectedNotification(
+  data: BidRejectedData,
+): Promise<void> {
+  const html = htmlWrapper(`
+    <h2>Tender Outcome — ${data.tenderNumber}</h2>
+    <p>Dear <strong>${data.contractorName}</strong>,</p>
+    <p>Thank you for submitting your bid for <strong>${data.tenderTitle}</strong> on project <strong>${data.projectName}</strong>.</p>
+    <p>After careful evaluation, we regret to inform you that your bid was not selected on this occasion. We appreciate your participation and encourage you to submit bids on future tenders.</p>
+  `);
+
+  const text = `
+Tender Outcome — ${data.tenderNumber}
+
+Dear ${data.contractorName},
+
+Thank you for submitting your bid for "${data.tenderTitle}" (${data.tenderNumber}).
+
+After careful evaluation, we regret to inform you that your bid was not selected. We appreciate your participation and encourage you to bid on future tenders.
+
+${APP_NAME}
+  `.trim();
+
+  await sendEmail(
+    data.contractorEmail,
+    `Tender Result: ${data.tenderTitle} [${data.tenderNumber}]`,
+    html,
+    text,
+  );
+}
+
+// ─── 6. RFI Answer Notification ──────────────────────────────────
+
+export interface RFIAnsweredData {
+  contractorName: string;
+  contractorEmail: string;
+  tenderNumber: string;
+  tenderTitle: string;
+  question: string;
+  answer: string;
+}
+
+export async function sendRFIAnsweredNotification(
+  data: RFIAnsweredData,
+): Promise<void> {
+  const viewUrl = `${APP_URL}/tender/${data.tenderNumber}`;
+
+  const html = htmlWrapper(`
+    <h2>RFI Response — ${data.tenderNumber}</h2>
+    <p>Dear <strong>${data.contractorName}</strong>,</p>
+    <p>Your Request for Information on tender <strong>${data.tenderTitle}</strong> has been answered.</p>
+    <div class="detail-box">
+      <p style="margin:0 0 8px;font-size:14px;"><strong>Your Question:</strong></p>
+      <p style="margin:0 0 16px;font-size:14px;color:#4b5563;">${data.question}</p>
+      <p style="margin:0 0 8px;font-size:14px;"><strong>Response:</strong></p>
+      <p style="margin:0;font-size:14px;color:#111827;">${data.answer}</p>
+    </div>
+    <a href="${viewUrl}" class="btn">View Tender</a>
+  `);
+
+  const text = `
+RFI Response — ${data.tenderNumber}
+
+Dear ${data.contractorName},
+
+Your RFI on tender "${data.tenderTitle}" has been answered.
+
+Question: ${data.question}
+
+Response: ${data.answer}
+
+View the tender at: ${viewUrl}
+  `.trim();
+
+  await sendEmail(
+    data.contractorEmail,
+    `RFI Answered: ${data.tenderTitle} [${data.tenderNumber}]`,
+    html,
+    text,
+  );
+}
