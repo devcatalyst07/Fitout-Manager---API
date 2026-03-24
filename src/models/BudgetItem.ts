@@ -39,7 +39,7 @@ const BudgetItemSchema = new Schema(
 
     createdBy: { type: Schema.Types.ObjectId, ref: "User" },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 BudgetItemSchema.index({ projectId: 1, category: 1 });
@@ -58,7 +58,11 @@ export interface IBudgetItem extends Document {
   awardedBidId?: mongoose.Types.ObjectId;
   isTenderSynced: boolean;
   createdBy?: mongoose.Types.ObjectId;
+<<<<<<< HEAD
   createdAt: Date;  
+=======
+  createdAt: Date;
+>>>>>>> 618761c2cc85650a261e7079b5182d76c2651e4c
   updatedAt: Date;
 }
 

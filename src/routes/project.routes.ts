@@ -4,6 +4,8 @@ import Project from "../models/Projects";
 import TeamMember from "../models/TeamMember";
 import Brand from "../models/Brand";
 import { copyWorkflowTemplatesToProject } from "../services/workflowTemplateService";
+import { notifyProjectParticipants } from "../services/projectNotificationService";
+import { buildProjectUpdateMessage } from "../utils/notificationMessageBuilders";
 
 const router = express.Router();
 
@@ -217,11 +219,9 @@ router.post(
 
       // Validation
       if (!projectName || !brand || !scope || !workflow) {
-        return res
-          .status(400)
-          .json({
-            message: "Project name, brand, scope, and workflow are required",
-          });
+        return res.status(400).json({
+          message: "Project name, brand, scope, and workflow are required",
+        });
       }
 
       // Validate schedule anchor
@@ -236,11 +236,9 @@ router.post(
       let anchorDate: Date;
       if (scheduleAnchor === "start") {
         if (!startDate) {
-          return res
-            .status(400)
-            .json({
-              message: "Start date is required when scheduling from start",
-            });
+          return res.status(400).json({
+            message: "Start date is required when scheduling from start",
+          });
         }
         anchorDate = new Date(startDate);
       } else {
@@ -397,6 +395,8 @@ router.put(
         return res.status(404).json({ message: "Project not found" });
       }
 
+      const previousProjectSnapshot = project.toObject();
+
       // Update fields
       if (projectName !== undefined) project.projectName = projectName;
       if (projectCode !== undefined) project.projectCode = projectCode;
@@ -418,6 +418,24 @@ router.put(
         "userId",
         "name email",
       );
+
+      await notifyProjectParticipants({
+        projectId: id,
+        actorId: req.user!.id,
+        actorName: req.user!.name || "User",
+        actorEmail: req.user!.email,
+        title: "Project updated",
+        message: buildProjectUpdateMessage(
+          req.user!.name || "User",
+          previousProjectSnapshot,
+          project.toObject(),
+        ),
+        section: "overview",
+        metadata: {
+          projectName: project.projectName,
+          activityAction: "project_updated",
+        },
+      });
 
       console.log("✅ Project updated:", updatedProject?.projectName);
       res.json({

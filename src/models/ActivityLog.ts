@@ -2,6 +2,7 @@ import mongoose, { Schema, Document } from "mongoose";
 
 export interface IActivityLog extends Document {
   taskId: mongoose.Types.ObjectId;
+  commentId?: mongoose.Types.ObjectId;
   userId: mongoose.Types.ObjectId;
   userName: string;
   userEmail: string;
@@ -20,6 +21,10 @@ const ActivityLogSchema: Schema = new Schema(
       ref: "Task",
       required: true,
       index: true,
+    },
+    commentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Comment",
     },
     userId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -67,7 +72,9 @@ const ActivityLogSchema: Schema = new Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
+
+ActivityLogSchema.index({ taskId: 1, commentId: 1 });
 
 export default mongoose.model<IActivityLog>("ActivityLog", ActivityLogSchema);

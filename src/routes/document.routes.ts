@@ -5,6 +5,7 @@ import Project from "../models/Projects";
 import multer from "multer";
 import { v2 as cloudinary } from "cloudinary";
 import { Readable } from "stream";
+import { activityHelpers } from "../utils/activityLogger";
 
 const router = express.Router();
 
@@ -280,6 +281,14 @@ router.post(
         .populate("uploadedBy", "name email")
         .populate("projectId", "projectName");
 
+      await activityHelpers.documentUploaded(
+        projectId,
+        userId,
+        req.user!.name || "User",
+        req.file.originalname,
+        req.user!.email,
+      );
+
       res.status(201).json({
         message: "Document uploaded successfully",
         document: populatedDocument,
@@ -330,6 +339,14 @@ router.delete(
       }
 
       await Document.findByIdAndDelete(id);
+
+      await activityHelpers.documentDeleted(
+        document.projectId.toString(),
+        req.user!.id,
+        req.user!.name || "User",
+        document.fileName,
+        req.user!.email,
+      );
 
       res.json({ message: "Document deleted successfully" });
     } catch (error: any) {

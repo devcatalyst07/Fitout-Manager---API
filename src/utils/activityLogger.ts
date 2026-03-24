@@ -1,5 +1,6 @@
-import ProjectActivity from '../models/ProjectActivity';
-import mongoose from 'mongoose';
+import ProjectActivity from "../models/ProjectActivity";
+import mongoose from "mongoose";
+import { notifyProjectParticipants } from "../services/projectNotificationService";
 
 export const activityHelpers = {
   // Budget Activities
@@ -8,13 +9,14 @@ export const activityHelpers = {
     userId: string,
     userName: string,
     amount: number,
-    category: string
+    category: string,
+    userEmail?: string,
   ) => {
     try {
       await ProjectActivity.create({
         projectId: new mongoose.Types.ObjectId(projectId),
-        type: 'budget',
-        action: 'budget_item_created',
+        type: "budget",
+        action: "budget_item_created",
         description: `${userName} added a new budget item in ${category} category`,
         userId: new mongoose.Types.ObjectId(userId),
         userName,
@@ -23,8 +25,23 @@ export const activityHelpers = {
           budgetCategory: category,
         },
       });
+
+      await notifyProjectParticipants({
+        projectId,
+        actorId: userId,
+        actorName: userName,
+        actorEmail: userEmail,
+        title: "Budget updated",
+        message: `${userName} added a budget item under ${category}`,
+        section: "budget",
+        metadata: {
+          budgetAmount: amount,
+          budgetCategory: category,
+          activityAction: "budget_item_created",
+        },
+      });
     } catch (error) {
-      console.error('Activity log error (budgetCreated):', error);
+      console.error("Activity log error (budgetCreated):", error);
     }
   },
 
@@ -33,13 +50,15 @@ export const activityHelpers = {
     userId: string,
     userName: string,
     amount: number,
-    category: string
+    category: string,
+    userEmail?: string,
+    customMessage?: string,
   ) => {
     try {
       await ProjectActivity.create({
         projectId: new mongoose.Types.ObjectId(projectId),
-        type: 'budget',
-        action: 'budget_item_updated',
+        type: "budget",
+        action: "budget_item_updated",
         description: `${userName} updated a budget item in ${category} category`,
         userId: new mongoose.Types.ObjectId(userId),
         userName,
@@ -48,8 +67,25 @@ export const activityHelpers = {
           budgetCategory: category,
         },
       });
+
+      await notifyProjectParticipants({
+        projectId,
+        actorId: userId,
+        actorName: userName,
+        actorEmail: userEmail,
+        title: "Budget updated",
+        message:
+          customMessage ||
+          `${userName} updated a budget item under ${category}`,
+        section: "budget",
+        metadata: {
+          budgetAmount: amount,
+          budgetCategory: category,
+          activityAction: "budget_item_updated",
+        },
+      });
     } catch (error) {
-      console.error('Activity log error (budgetUpdated):', error);
+      console.error("Activity log error (budgetUpdated):", error);
     }
   },
 
@@ -57,13 +93,15 @@ export const activityHelpers = {
     projectId: string,
     userId: string,
     userName: string,
-    category: string
+    category: string,
+    userEmail?: string,
+    customMessage?: string,
   ) => {
     try {
       await ProjectActivity.create({
         projectId: new mongoose.Types.ObjectId(projectId),
-        type: 'budget',
-        action: 'budget_item_deleted',
+        type: "budget",
+        action: "budget_item_deleted",
         description: `${userName} deleted a budget item from ${category} category`,
         userId: new mongoose.Types.ObjectId(userId),
         userName,
@@ -71,8 +109,23 @@ export const activityHelpers = {
           budgetCategory: category,
         },
       });
+
+      await notifyProjectParticipants({
+        projectId,
+        actorId: userId,
+        actorName: userName,
+        actorEmail: userEmail,
+        title: "Budget updated",
+        message:
+          customMessage || `${userName} deleted a budget item from ${category}`,
+        section: "budget",
+        metadata: {
+          budgetCategory: category,
+          activityAction: "budget_item_deleted",
+        },
+      });
     } catch (error) {
-      console.error('Activity log error (budgetDeleted):', error);
+      console.error("Activity log error (budgetDeleted):", error);
     }
   },
 
@@ -82,13 +135,15 @@ export const activityHelpers = {
     userId: string,
     userName: string,
     taskTitle: string,
-    taskId: string
+    taskId: string,
+    assigneeEmails: string[] = [],
+    userEmail?: string,
   ) => {
     try {
       await ProjectActivity.create({
         projectId: new mongoose.Types.ObjectId(projectId),
-        type: 'task',
-        action: 'task_created',
+        type: "task",
+        action: "task_created",
         description: `${userName} created task "${taskTitle}"`,
         userId: new mongoose.Types.ObjectId(userId),
         userName,
@@ -97,8 +152,25 @@ export const activityHelpers = {
           taskTitle,
         },
       });
+
+      await notifyProjectParticipants({
+        projectId,
+        actorId: userId,
+        actorName: userName,
+        actorEmail: userEmail,
+        title: "Task updated",
+        message: `${userName} created task "${taskTitle}"`,
+        taskId,
+        section: "tasks",
+        extraRecipientEmails: assigneeEmails,
+        metadata: {
+          taskId,
+          taskTitle,
+          activityAction: "task_created",
+        },
+      });
     } catch (error) {
-      console.error('Activity log error (taskCreated):', error);
+      console.error("Activity log error (taskCreated):", error);
     }
   },
 
@@ -107,13 +179,16 @@ export const activityHelpers = {
     userId: string,
     userName: string,
     taskTitle: string,
-    taskId: string
+    taskId: string,
+    assigneeEmails: string[] = [],
+    userEmail?: string,
+    customMessage?: string,
   ) => {
     try {
       await ProjectActivity.create({
         projectId: new mongoose.Types.ObjectId(projectId),
-        type: 'task',
-        action: 'task_updated',
+        type: "task",
+        action: "task_updated",
         description: `${userName} updated task "${taskTitle}"`,
         userId: new mongoose.Types.ObjectId(userId),
         userName,
@@ -122,8 +197,25 @@ export const activityHelpers = {
           taskTitle,
         },
       });
+
+      await notifyProjectParticipants({
+        projectId,
+        actorId: userId,
+        actorName: userName,
+        actorEmail: userEmail,
+        title: "Task updated",
+        message: customMessage || `${userName} updated task "${taskTitle}"`,
+        taskId,
+        section: "tasks",
+        extraRecipientEmails: assigneeEmails,
+        metadata: {
+          taskId,
+          taskTitle,
+          activityAction: "task_updated",
+        },
+      });
     } catch (error) {
-      console.error('Activity log error (taskUpdated):', error);
+      console.error("Activity log error (taskUpdated):", error);
     }
   },
 
@@ -132,24 +224,45 @@ export const activityHelpers = {
     userId: string,
     userName: string,
     taskTitle: string,
-    taskId: string
+    taskId: string,
+    assigneeEmails: string[] = [],
+    userEmail?: string,
+    customMessage?: string,
   ) => {
     try {
       await ProjectActivity.create({
         projectId: new mongoose.Types.ObjectId(projectId),
-        type: 'task',
-        action: 'task_completed',
+        type: "task",
+        action: "task_completed",
         description: `${userName} completed task "${taskTitle}"`,
         userId: new mongoose.Types.ObjectId(userId),
         userName,
         metadata: {
           taskId,
           taskTitle,
-          severity: 'info',
+          severity: "info",
+        },
+      });
+
+      await notifyProjectParticipants({
+        projectId,
+        actorId: userId,
+        actorName: userName,
+        actorEmail: userEmail,
+        title: "Task completed",
+        message: customMessage || `${userName} completed task "${taskTitle}"`,
+        taskId,
+        section: "tasks",
+        extraRecipientEmails: assigneeEmails,
+        metadata: {
+          taskId,
+          taskTitle,
+          activityAction: "task_completed",
+          severity: "info",
         },
       });
     } catch (error) {
-      console.error('Activity log error (taskCompleted):', error);
+      console.error("Activity log error (taskCompleted):", error);
     }
   },
 
@@ -157,13 +270,15 @@ export const activityHelpers = {
     projectId: string,
     userId: string,
     userName: string,
-    taskTitle: string
+    taskTitle: string,
+    assigneeEmails: string[] = [],
+    userEmail?: string,
   ) => {
     try {
       await ProjectActivity.create({
         projectId: new mongoose.Types.ObjectId(projectId),
-        type: 'task',
-        action: 'task_deleted',
+        type: "task",
+        action: "task_deleted",
         description: `${userName} deleted task "${taskTitle}"`,
         userId: new mongoose.Types.ObjectId(userId),
         userName,
@@ -171,8 +286,23 @@ export const activityHelpers = {
           taskTitle,
         },
       });
+
+      await notifyProjectParticipants({
+        projectId,
+        actorId: userId,
+        actorName: userName,
+        actorEmail: userEmail,
+        title: "Task updated",
+        message: `${userName} deleted task "${taskTitle}"`,
+        section: "tasks",
+        extraRecipientEmails: assigneeEmails,
+        metadata: {
+          taskTitle,
+          activityAction: "task_deleted",
+        },
+      });
     } catch (error) {
-      console.error('Activity log error (taskDeleted):', error);
+      console.error("Activity log error (taskDeleted):", error);
     }
   },
 
@@ -181,13 +311,14 @@ export const activityHelpers = {
     projectId: string,
     userId: string,
     userName: string,
-    memberName: string
+    memberName: string,
+    userEmail?: string,
   ) => {
     try {
       await ProjectActivity.create({
         projectId: new mongoose.Types.ObjectId(projectId),
-        type: 'team',
-        action: 'team_member_added',
+        type: "team",
+        action: "team_member_added",
         description: `${userName} added ${memberName} to the team`,
         userId: new mongoose.Types.ObjectId(userId),
         userName,
@@ -195,8 +326,22 @@ export const activityHelpers = {
           teamMemberName: memberName,
         },
       });
+
+      await notifyProjectParticipants({
+        projectId,
+        actorId: userId,
+        actorName: userName,
+        actorEmail: userEmail,
+        title: "Team updated",
+        message: `${userName} added ${memberName} to the project team`,
+        section: "team",
+        metadata: {
+          teamMemberName: memberName,
+          activityAction: "team_member_added",
+        },
+      });
     } catch (error) {
-      console.error('Activity log error (teamMemberAdded):', error);
+      console.error("Activity log error (teamMemberAdded):", error);
     }
   },
 
@@ -204,13 +349,16 @@ export const activityHelpers = {
     projectId: string,
     userId: string,
     userName: string,
-    memberName: string
+    memberName: string,
+    removedMemberUserId?: string,
+    userEmail?: string,
+    customMessage?: string,
   ) => {
     try {
       await ProjectActivity.create({
         projectId: new mongoose.Types.ObjectId(projectId),
-        type: 'team',
-        action: 'team_member_removed',
+        type: "team",
+        action: "team_member_removed",
         description: `${userName} removed ${memberName} from the team`,
         userId: new mongoose.Types.ObjectId(userId),
         userName,
@@ -218,8 +366,25 @@ export const activityHelpers = {
           teamMemberName: memberName,
         },
       });
+
+      await notifyProjectParticipants({
+        projectId,
+        actorId: userId,
+        actorName: userName,
+        actorEmail: userEmail,
+        title: "Team updated",
+        message:
+          customMessage ||
+          `${userName} removed ${memberName} from the project team`,
+        section: "team",
+        extraRecipientUserIds: removedMemberUserId ? [removedMemberUserId] : [],
+        metadata: {
+          teamMemberName: memberName,
+          activityAction: "team_member_removed",
+        },
+      });
     } catch (error) {
-      console.error('Activity log error (teamMemberRemoved):', error);
+      console.error("Activity log error (teamMemberRemoved):", error);
     }
   },
 
@@ -228,13 +393,14 @@ export const activityHelpers = {
     projectId: string,
     userId: string,
     userName: string,
-    documentName: string
+    documentName: string,
+    userEmail?: string,
   ) => {
     try {
       await ProjectActivity.create({
         projectId: new mongoose.Types.ObjectId(projectId),
-        type: 'document',
-        action: 'document_uploaded',
+        type: "document",
+        action: "document_uploaded",
         description: `${userName} uploaded document "${documentName}"`,
         userId: new mongoose.Types.ObjectId(userId),
         userName,
@@ -242,8 +408,22 @@ export const activityHelpers = {
           documentName,
         },
       });
+
+      await notifyProjectParticipants({
+        projectId,
+        actorId: userId,
+        actorName: userName,
+        actorEmail: userEmail,
+        title: "Documents updated",
+        message: `${userName} uploaded document "${documentName}"`,
+        section: "documents",
+        metadata: {
+          documentName,
+          activityAction: "document_uploaded",
+        },
+      });
     } catch (error) {
-      console.error('Activity log error (documentUploaded):', error);
+      console.error("Activity log error (documentUploaded):", error);
     }
   },
 
@@ -251,13 +431,14 @@ export const activityHelpers = {
     projectId: string,
     userId: string,
     userName: string,
-    documentName: string
+    documentName: string,
+    userEmail?: string,
   ) => {
     try {
       await ProjectActivity.create({
         projectId: new mongoose.Types.ObjectId(projectId),
-        type: 'document',
-        action: 'document_deleted',
+        type: "document",
+        action: "document_deleted",
         description: `${userName} deleted document "${documentName}"`,
         userId: new mongoose.Types.ObjectId(userId),
         userName,
@@ -265,8 +446,22 @@ export const activityHelpers = {
           documentName,
         },
       });
+
+      await notifyProjectParticipants({
+        projectId,
+        actorId: userId,
+        actorName: userName,
+        actorEmail: userEmail,
+        title: "Documents updated",
+        message: `${userName} deleted document "${documentName}"`,
+        section: "documents",
+        metadata: {
+          documentName,
+          activityAction: "document_deleted",
+        },
+      });
     } catch (error) {
-      console.error('Activity log error (documentDeleted):', error);
+      console.error("Activity log error (documentDeleted):", error);
     }
   },
 
@@ -275,13 +470,13 @@ export const activityHelpers = {
     projectId: string,
     userId: string,
     userName: string,
-    approvalType: string
+    approvalType: string,
   ) => {
     try {
       await ProjectActivity.create({
         projectId: new mongoose.Types.ObjectId(projectId),
-        type: 'approval',
-        action: 'approval_requested',
+        type: "approval",
+        action: "approval_requested",
         description: `${userName} requested approval for ${approvalType}`,
         userId: new mongoose.Types.ObjectId(userId),
         userName,
@@ -290,7 +485,7 @@ export const activityHelpers = {
         },
       });
     } catch (error) {
-      console.error('Activity log error (approvalRequested):', error);
+      console.error("Activity log error (approvalRequested):", error);
     }
   },
 
@@ -298,13 +493,13 @@ export const activityHelpers = {
     projectId: string,
     userId: string,
     userName: string,
-    approvalType: string
+    approvalType: string,
   ) => {
     try {
       await ProjectActivity.create({
         projectId: new mongoose.Types.ObjectId(projectId),
-        type: 'approval',
-        action: 'approval_granted',
+        type: "approval",
+        action: "approval_granted",
         description: `${userName} approved ${approvalType}`,
         userId: new mongoose.Types.ObjectId(userId),
         userName,
@@ -313,7 +508,7 @@ export const activityHelpers = {
         },
       });
     } catch (error) {
-      console.error('Activity log error (approvalGranted):', error);
+      console.error("Activity log error (approvalGranted):", error);
     }
   },
 
@@ -321,23 +516,23 @@ export const activityHelpers = {
     projectId: string,
     userId: string,
     userName: string,
-    approvalType: string
+    approvalType: string,
   ) => {
     try {
       await ProjectActivity.create({
         projectId: new mongoose.Types.ObjectId(projectId),
-        type: 'approval',
-        action: 'approval_rejected',
+        type: "approval",
+        action: "approval_rejected",
         description: `${userName} rejected ${approvalType}`,
         userId: new mongoose.Types.ObjectId(userId),
         userName,
         metadata: {
           approvalType,
-          severity: 'warning',
+          severity: "warning",
         },
       });
     } catch (error) {
-      console.error('Activity log error (approvalRejected):', error);
+      console.error("Activity log error (approvalRejected):", error);
     }
   },
 
@@ -345,20 +540,20 @@ export const activityHelpers = {
   systemAlert: async (
     projectId: string,
     description: string,
-    severity: 'info' | 'warning' | 'critical' = 'info'
+    severity: "info" | "warning" | "critical" = "info",
   ) => {
     try {
       await ProjectActivity.create({
         projectId: new mongoose.Types.ObjectId(projectId),
-        type: 'system',
-        action: 'system_alert',
+        type: "system",
+        action: "system_alert",
         description,
         metadata: {
           severity,
         },
       });
     } catch (error) {
-      console.error('Activity log error (systemAlert):', error);
+      console.error("Activity log error (systemAlert):", error);
     }
   },
 };

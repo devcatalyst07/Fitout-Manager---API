@@ -1,4 +1,4 @@
-import express from 'express';
+import express from "express";
 import { authMiddleware } from "../middleware/auth";
 import multer from "multer";
 import { v2 as cloudinary } from "cloudinary";
@@ -35,31 +35,50 @@ const upload = multer({
 router.post(
   "/upload",
   authMiddleware,
-  upload.single("file"),
+  upload.fields([
+    { name: "file", maxCount: 10 },
+    { name: "files", maxCount: 10 },
+  ]),
   async (req: express.Request, res: express.Response) => {
     try {
-      if (!req.file) {
+      const uploadFiles = [
+        ...(((req.files as Record<string, Express.Multer.File[]>)?.file ||
+          []) as Express.Multer.File[]),
+        ...(((req.files as Record<string, Express.Multer.File[]>)?.files ||
+          []) as Express.Multer.File[]),
+      ];
+
+      if (uploadFiles.length === 0) {
         return res.status(400).json({ message: "No file uploaded" });
       }
 
-      const b64 = Buffer.from(req.file.buffer).toString("base64");
-      const dataURI = `data:${req.file.mimetype};base64,${b64}`;
+      const uploadedFiles = await Promise.all(
+        uploadFiles.map(async (file) => {
+          const b64 = Buffer.from(file.buffer).toString("base64");
+          const dataURI = `data:${file.mimetype};base64,${b64}`;
 
-      // Upload to Cloudinary
-      const result = await cloudinary.uploader.upload(dataURI, {
-        folder: "fitout-manager/task-attachments",
-        resource_type: "auto",
-      });
+          const result = await cloudinary.uploader.upload(dataURI, {
+            folder: "fitout-manager/task-attachments",
+            resource_type: "auto",
+          });
+
+          return {
+            fileName: file.originalname,
+            fileUrl: result.secure_url,
+            fileType: file.mimetype,
+            fileSize: file.size,
+            publicId: result.public_id,
+          };
+        }),
+      );
+
+      const firstFile = uploadedFiles[0];
 
       res.json({
         message: "File uploaded successfully",
-        file: {
-          fileName: req.file.originalname,
-          fileUrl: result.secure_url,
-          fileType: req.file.mimetype,
-          fileSize: req.file.size,
-          publicId: result.public_id, // For deletion lang to if needed
-        },
+        file: firstFile,
+        files: uploadedFiles,
+        urls: uploadedFiles.map((file) => file.fileUrl),
       });
     } catch (error: any) {
       console.error("Upload error:", error);

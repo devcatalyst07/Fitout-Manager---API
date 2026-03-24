@@ -1,4 +1,4 @@
-import express from 'express';
+import express from "express";
 import bcrypt from "bcryptjs";
 import multer from "multer";
 import { v2 as cloudinary } from "cloudinary";
@@ -30,38 +30,42 @@ const upload = multer({
 
 // ─── GET /api/profile ─────────────────────────────────────────────────────────
 // Returns current logged-in user's profile (works for both admin & user)
-router.get("/", authMiddleware, async (req: express.Request, res: express.Response) => {
-  try {
-    const user = await User.findById(req.user!.id).select("-password");
+router.get(
+  "/",
+  authMiddleware,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const user = await User.findById(req.user!.id).select("-password");
 
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      // If firstName/lastName not yet set, derive from 'name' for backward compat
+      const firstName =
+        user.firstName || (user.name ? user.name.split(" ")[0] : "");
+      const lastName =
+        user.lastName ||
+        (user.name ? user.name.split(" ").slice(1).join(" ") : "");
+      const username = user.username || user.email.split("@")[0];
+
+      res.json({
+        id: user._id,
+        name: user.name,
+        firstName,
+        lastName,
+        username,
+        email: user.email,
+        role: user.role,
+        profilePhoto: user.profilePhoto || "",
+        updatedAt: user.updatedAt,
+      });
+    } catch (error: any) {
+      console.error("Get profile error:", error);
+      res.status(500).json({ message: "Failed to fetch profile" });
     }
-
-    // If firstName/lastName not yet set, derive from 'name' for backward compat
-    const firstName =
-      user.firstName || (user.name ? user.name.split(" ")[0] : "");
-    const lastName =
-      user.lastName ||
-      (user.name ? user.name.split(" ").slice(1).join(" ") : "");
-    const username = user.username || user.email.split("@")[0];
-
-    res.json({
-      id: user._id,
-      name: user.name,
-      firstName,
-      lastName,
-      username,
-      email: user.email,
-      role: user.role,
-      profilePhoto: user.profilePhoto || "",
-      updatedAt: user.updatedAt,
-    });
-  } catch (error: any) {
-    console.error("Get profile error:", error);
-    res.status(500).json({ message: "Failed to fetch profile" });
-  }
-});
+  },
+);
 
 // ─── PUT /api/profile ─────────────────────────────────────────────────────────
 // Updates profile fields. Accepts optional image upload (multipart).
@@ -87,11 +91,9 @@ router.put(
         !username?.trim() ||
         !email?.trim()
       ) {
-        return res
-          .status(400)
-          .json({
-            message: "First name, last name, username, and email are required.",
-          });
+        return res.status(400).json({
+          message: "First name, last name, username, and email are required.",
+        });
       }
 
       // ── Check username uniqueness (exclude current user) ──
@@ -224,6 +226,67 @@ router.post(
     } catch (error: any) {
       console.error("Change password error:", error);
       res.status(500).json({ message: "Failed to change password" });
+    }
+  },
+);
+
+router.get(
+  "/preferences/notifications",
+  authMiddleware,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const user = await User.findById(req.user!.id).select(
+        "notificationToastEnabled",
+      );
+
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      res.json({
+        notificationToastEnabled: user.notificationToastEnabled !== false,
+      });
+    } catch (error: any) {
+      console.error("Get notification preferences error:", error);
+      res
+        .status(500)
+        .json({ message: "Failed to fetch notification preferences" });
+    }
+  },
+);
+
+router.put(
+  "/preferences/notifications",
+  authMiddleware,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { notificationToastEnabled } = req.body;
+
+      if (typeof notificationToastEnabled !== "boolean") {
+        return res
+          .status(400)
+          .json({ message: "notificationToastEnabled must be boolean" });
+      }
+
+      const user = await User.findByIdAndUpdate(
+        req.user!.id,
+        { notificationToastEnabled },
+        { new: true },
+      ).select("notificationToastEnabled");
+
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      res.json({
+        message: "Notification preferences updated",
+        notificationToastEnabled: user.notificationToastEnabled !== false,
+      });
+    } catch (error: any) {
+      console.error("Update notification preferences error:", error);
+      res
+        .status(500)
+        .json({ message: "Failed to update notification preferences" });
     }
   },
 );

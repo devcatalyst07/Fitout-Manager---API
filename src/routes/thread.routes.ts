@@ -5,6 +5,12 @@ import ThreadComment from "../models/ThreadComment";
 import Brand from "../models/Brand";
 import TeamMember from "../models/TeamMember";
 import Project from "../models/Projects";
+import {
+  addThreadClient,
+  removeThreadClient,
+  sendThreadEvent,
+  sendThreadHeartbeat,
+} from "../services/threadRealtimeService";
 
 const router = express.Router();
 
@@ -218,6 +224,51 @@ router.get(
   },
 );
 
+// GET thread realtime stream
+router.get(
+  "/threads/:threadId/stream",
+  authMiddleware,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { threadId } = req.params;
+
+      const thread = await Thread.findById(threadId).lean();
+      if (!thread) {
+        return res.status(404).json({ message: "Thread not found" });
+      }
+
+      const hasAccess = await canAccessThread(req.user!.id, thread);
+      if (!hasAccess) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+
+      addThreadClient(threadId, res);
+
+      sendThreadEvent(threadId, "thread:connected", {
+        type: "connected",
+      });
+
+      const heartbeatInterval = setInterval(() => {
+        sendThreadHeartbeat(threadId);
+      }, 25000);
+
+      req.on("close", () => {
+        clearInterval(heartbeatInterval);
+        removeThreadClient(threadId, res);
+      });
+    } catch (error) {
+      console.error("Thread realtime stream error:", error);
+      if (!res.headersSent) {
+        res.status(500).json({ message: "Failed to open thread stream" });
+      }
+    }
+  },
+);
+
 // GET projects for brand (for dropdown)
 router.get(
   "/brands/:brandId/projects",
@@ -384,8 +435,14 @@ router.post(
       const { threadId } = req.params;
       const { content, attachments } = req.body;
 
-      if (!content) {
-        return res.status(400).json({ message: "Content is required" });
+      const hasContent = typeof content === "string" && content.trim() !== "";
+      const hasAttachments =
+        Array.isArray(attachments) && attachments.length > 0;
+
+      if (!hasContent && !hasAttachments) {
+        return res
+          .status(400)
+          .json({ message: "Comment content or attachment is required" });
       }
 
       const thread = await Thread.findById(threadId);
@@ -401,7 +458,7 @@ router.post(
 
       const newComment = await ThreadComment.create({
         threadId,
-        content,
+        content: hasContent ? content.trim() : "",
         createdBy: req.user!.id,
         createdByName: req.user!.name,
         createdByEmail: req.user!.email,
@@ -411,6 +468,11 @@ router.post(
       // Update comment count
       thread.commentCount = (thread.commentCount || 0) + 1;
       await thread.save();
+
+      sendThreadEvent(threadId, "thread:comment:new", {
+        type: "comment:new",
+        comment: newComment,
+      });
 
       res.status(201).json({
         message: "Comment added successfully",
@@ -451,6 +513,11 @@ router.put(
 
       await comment.save();
 
+      sendThreadEvent(comment.threadId.toString(), "thread:comment:updated", {
+        type: "comment:updated",
+        comment,
+      });
+
       res.json({
         message: "Comment updated successfully",
         comment,
@@ -487,8 +554,15 @@ router.delete(
         $inc: { commentCount: -1 },
       });
 
+      const threadId = comment.threadId.toString();
+
       // Delete comment
       await ThreadComment.findByIdAndDelete(commentId);
+
+      sendThreadEvent(threadId, "thread:comment:deleted", {
+        type: "comment:deleted",
+        commentId,
+      });
 
       res.json({ message: "Comment deleted successfully" });
     } catch (error) {
@@ -525,6 +599,12 @@ router.post(
       }
 
       await comment.save();
+
+      sendThreadEvent(comment.threadId.toString(), "thread:comment:liked", {
+        type: "comment:liked",
+        commentId: comment._id,
+        likes: comment.likes,
+      });
 
       res.json({
         message: likeIndex > -1 ? "Comment unliked" : "Comment liked",

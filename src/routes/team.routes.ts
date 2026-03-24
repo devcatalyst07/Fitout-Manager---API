@@ -8,6 +8,8 @@ import TeamMember from "../models/TeamMember";
 import Project from "../models/Projects";
 import User from "../models/User";
 import { activityHelpers } from "../utils/activityLogger";
+import { notifyProjectParticipants } from "../services/projectNotificationService";
+import { buildTeamUpdateMessage } from "../utils/notificationMessageBuilders";
 
 const router = express.Router();
 
@@ -105,6 +107,7 @@ router.post(
           req.user!.id,
           req.user!.name || "User",
           (populatedMember.userId as any).name || "Unknown",
+          req.user!.email,
         );
       }
 
@@ -139,6 +142,17 @@ router.put(
       const { projectId, memberId } = req.params;
       const { roleId, status } = req.body;
 
+      const existingMember = await TeamMember.findOne({
+        _id: memberId,
+        projectId,
+      })
+        .populate("userId", "name email")
+        .populate("roleId", "name permissions");
+
+      if (!existingMember) {
+        return res.status(404).json({ message: "Team member not found" });
+      }
+
       const updateData: any = {};
       if (roleId) updateData.roleId = roleId;
       if (status) updateData.status = status;
@@ -155,6 +169,37 @@ router.put(
       if (!updatedMember) {
         return res.status(404).json({ message: "Team member not found" });
       }
+
+      const memberName = (updatedMember.userId as any)?.name || "Unknown";
+      const teamUpdateMessage = buildTeamUpdateMessage(
+        req.user!.name || "User",
+        memberName,
+        {
+          roleName: (existingMember.roleId as any)?.name,
+          status: existingMember.status,
+        },
+        {
+          roleName: (updatedMember.roleId as any)?.name,
+          status: updatedMember.status,
+        },
+      );
+
+      await notifyProjectParticipants({
+        projectId,
+        actorId: req.user!.id,
+        actorName: req.user!.name || "User",
+        actorEmail: req.user!.email,
+        title: "Team updated",
+        message: teamUpdateMessage,
+        section: "team",
+        extraRecipientUserIds: [
+          String((updatedMember.userId as any)?._id || ""),
+        ],
+        metadata: {
+          teamMemberName: memberName,
+          activityAction: "team_member_updated",
+        },
+      });
 
       res.json({
         message: "Team member updated successfully",
@@ -184,11 +229,21 @@ router.delete(
         { _id: memberId, projectId },
         { status: "removed" },
         { new: true },
-      );
+      ).populate("userId", "name email");
 
       if (!updatedMember) {
         return res.status(404).json({ message: "Team member not found" });
       }
+
+      await activityHelpers.teamMemberRemoved(
+        projectId,
+        req.user!.id,
+        req.user!.name || "User",
+        (updatedMember.userId as any)?.name || "Unknown",
+        (updatedMember.userId as any)?._id?.toString(),
+        req.user!.email,
+        `${req.user!.name || "User"} removed ${(updatedMember.userId as any)?.name || "Unknown"} from the project team.`,
+      );
 
       res.json({ message: "Team member removed successfully" });
     } catch (error: any) {
