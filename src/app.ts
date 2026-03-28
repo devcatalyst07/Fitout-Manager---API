@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import path from "path";
-import { securityConfig } from "./config/security";
+import { securityConfig, getAllowedOrigins } from "./config/security";
 import {
   securityHeaders,
   customSecurityHeaders,
@@ -50,36 +50,43 @@ initRedis().catch((err) => {
 // Trust proxy (required for Vercel and other reverse proxies)
 app.set("trust proxy", 1);
 
-// CORS Configuration - MUST BE FIRST, BEFORE OTHER MIDDLEWARE
-const allowedOrigins = [
-  process.env.FRONTEND_URL,
-  process.env.PROD_FRONTEND_URL,
-  "http://localhost:3000",
-  "http://127.0.0.1:3000",
-  "https://fitout-manager-mockup.vercel.app",
-].filter(Boolean);
+// ─────────────────────────────────────────────────────────────────────────────
+// CORS — single source of truth, registered FIRST before any other middleware.
+// Calls getAllowedOrigins() at request time so env vars are always fresh.
+// ─────────────────────────────────────────────────────────────────────────────
+const corsOptions: cors.CorsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests with no origin (Postman, curl, mobile apps, server-to-server)
+    if (!origin) return callback(null, true);
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps, Postman, curl)
-      if (!origin) return callback(null, true);
+    const allowed = getAllowedOrigins();
+    if (allowed.includes(origin)) {
+      console.log("✅ CORS allowed:", origin);
+      callback(null, true);
+    } else {
+      console.log("🚫 CORS blocked:", origin);
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-CSRF-Token",
+    "Cookie",
+    "X-Requested-With",
+  ],
+  exposedHeaders: ["X-CSRF-Token", "Set-Cookie"],
+  maxAge: 86400,
+};
 
-      if (allowedOrigins.includes(origin)) {
-        console.log("CORS allowed origin:", origin);
-        callback(null, true);
-      } else {
-        console.log("CORS blocked origin:", origin);
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-CSRF-Token", "Cookie"],
-    exposedHeaders: ["X-CSRF-Token", "Set-Cookie"],
-    maxAge: 86400,
-  }),
-);
+// Apply CORS middleware to every request
+app.use(cors(corsOptions));
+
+// ✅ Explicitly handle ALL preflight OPTIONS requests RIGHT HERE.
+// Without this, OPTIONS hits CSRF middleware and fails with 403.
+app.options("*", cors(corsOptions));
 
 // Security headers
 app.use(securityHeaders);
@@ -95,16 +102,16 @@ app.use(cookieParser());
 // Rate limiting
 app.use(rateLimiter);
 
-// Logging middleware
+// Request logging
 app.use((req, res, next) => {
-  console.log(`📍 ${req.method} ${req.path}`);
+  console.log(`📍 ${req.method} ${req.path} | origin: ${req.headers.origin ?? "none"}`);
   next();
 });
 
 // Static files
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
-// Health check (no auth required)
+// Health check
 app.get("/health", (_, res) => {
   res.json({
     status: "healthy",
@@ -124,8 +131,8 @@ app.get("/", (_, res) => {
   });
 });
 
-// CSRF middleware - Apply to all /api routes
-// The middleware itself handles skipping for login/register/GET requests
+// CSRF — applied to all /api routes only.
+// The middleware itself skips GET requests and auth endpoints.
 app.use("/api", setCsrfToken);
 app.use("/api", verifyCsrf);
 
@@ -160,7 +167,7 @@ app.use("/api/public", publicRoutes);
 
 // 404 Handler
 app.use((req, res) => {
-  console.log(`404 Not Found: ${req.method} ${req.path}`);
+  console.log(`❓ 404: ${req.method} ${req.path}`);
   res.status(404).json({
     message: "Route not found",
     path: req.path,
@@ -168,7 +175,7 @@ app.use((req, res) => {
   });
 });
 
-// Error handler
+// Global error handler
 app.use(
   (
     err: any,
@@ -176,7 +183,15 @@ app.use(
     res: express.Response,
     next: express.NextFunction,
   ) => {
-    console.error("Error:", err);
+    console.error("❌ Error:", err.message);
+
+    if (err.message === "Not allowed by CORS") {
+      return res.status(403).json({
+        message: "CORS: Origin not allowed",
+        code: "CORS_ERROR",
+      });
+    }
+
     res.status(err.status || 500).json({
       message: err.message || "Internal server error",
       code: err.code || "SERVER_ERROR",
