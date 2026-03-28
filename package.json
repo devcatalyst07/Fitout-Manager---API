@@ -36,7 +36,7 @@
     "nodemailer": "^6.9.7",
     "redis": "^4.7.1",
     "streamifier": "^0.1.1",
-    "uuid": "^13.0.0",
+    "uuid": "^8.3.2",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

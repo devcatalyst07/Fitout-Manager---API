@@ -6,7 +6,7 @@ import {
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "crypto";
 import path from "path";
 
 // ─── R2 Client ───────────────────────────────────────────────────────────────
@@ -37,7 +37,7 @@ function sanitizeFileName(originalName: string): string {
     .basename(originalName, ext)
     .replace(/[^a-zA-Z0-9._-]/g, "-")
     .substring(0, 100);
-  return `${base}-${uuidv4().substring(0, 8)}${ext}`;
+  return `${base}-${randomUUID().substring(0, 8)}${ext}`;
 }
 
 /**
