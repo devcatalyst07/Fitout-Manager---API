@@ -1,22 +1,17 @@
+// src/routes/document.routes.ts
+// UPDATED: Uses Cloudflare R2 instead of Cloudinary
+
 import express from "express";
 import { authMiddleware } from "../middleware/auth";
 import Document from "../models/Document";
 import Project from "../models/Projects";
 import multer from "multer";
-import { v2 as cloudinary } from "cloudinary";
-import { Readable } from "stream";
+import { uploadToR2, deleteFromR2, getPresignedUrl } from "../utils/r2Storage";
 import { activityHelpers } from "../utils/activityLogger";
 
 const router = express.Router();
 
-// Configure Cloudinary
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
-
-// Multer memory storage
+// Multer memory storage — no change needed here
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
@@ -37,31 +32,15 @@ const upload = multer({
     } else {
       cb(
         new Error(
-          "Only PDF, DOC, DOCX, XLS, XLSX, PNG, JPG, JPEG files are allowed",
-        ),
+          "Only PDF, DOC, DOCX, XLS, XLSX, PNG, JPG, JPEG files are allowed"
+        )
       );
     }
   },
 });
 
-// Helper: Upload buffer to Cloudinary
-const uploadToCloudinary = (buffer: Buffer, options: any) => {
-  return new Promise<any>((resolve, reject) => {
-    const uploadStream = cloudinary.uploader.upload_stream(
-      options,
-      (error, result) => {
-        if (error) return reject(error);
-        resolve(result);
-      },
-    );
-
-    Readable.from(buffer).pipe(uploadStream);
-  });
-};
-
 // ============================================
-// GET /api/documents/projects - Get all projects for dropdown
-// ✅ UPDATED: Filter based on user role
+// GET /api/documents/projects
 // ============================================
 router.get(
   "/projects",
@@ -71,10 +50,8 @@ router.get(
       let projectFilter: any = {};
 
       if (req.user!.role === "admin") {
-        // Tenant isolation: admin sees only own projects
         projectFilter = { userId: req.user!.id };
       } else {
-        // User sees only assigned projects
         const TeamMember = require("../models/TeamMember").default;
         const teamMembers = await TeamMember.find({
           userId: req.user!.id,
@@ -82,10 +59,7 @@ router.get(
         });
 
         const projectIds = teamMembers.map((tm: any) => tm.projectId);
-
-        if (projectIds.length === 0) {
-          return res.json([]);
-        }
+        if (projectIds.length === 0) return res.json([]);
 
         projectFilter._id = { $in: projectIds };
       }
@@ -100,12 +74,11 @@ router.get(
         .status(500)
         .json({ message: "Failed to fetch projects", error: error.message });
     }
-  },
+  }
 );
 
 // ============================================
-// GET /api/documents/folders - Get all document folders
-// ✅ UPDATED: Filter based on user role
+// GET /api/documents/folders
 // ============================================
 router.get(
   "/folders",
@@ -115,10 +88,8 @@ router.get(
       let projectFilter: any = {};
 
       if (req.user!.role === "admin") {
-        // Tenant isolation: admin sees only own projects
         projectFilter = { userId: req.user!.id };
       } else {
-        // User sees only assigned projects
         const TeamMember = require("../models/TeamMember").default;
         const teamMembers = await TeamMember.find({
           userId: req.user!.id,
@@ -126,10 +97,7 @@ router.get(
         });
 
         const projectIds = teamMembers.map((tm: any) => tm.projectId);
-
-        if (projectIds.length === 0) {
-          return res.json([]);
-        }
+        if (projectIds.length === 0) return res.json([]);
 
         projectFilter._id = { $in: projectIds };
       }
@@ -148,7 +116,7 @@ router.get(
             projectName: project.projectName,
             documentCount,
           };
-        }),
+        })
       );
 
       res.json(foldersWithCount);
@@ -158,12 +126,11 @@ router.get(
         error: error.message,
       });
     }
-  },
+  }
 );
 
 // ============================================
-// GET /api/documents/project/:projectId - Get documents by project
-// ✅ UPDATED: Check project access
+// GET /api/documents/project/:projectId
 // ============================================
 router.get(
   "/project/:projectId",
@@ -173,24 +140,20 @@ router.get(
       const { projectId } = req.params;
 
       const project = await Project.findById(projectId);
-      if (!project) {
+      if (!project)
         return res.status(404).json({ message: "Project not found" });
-      }
 
-      // Check project access for users/admins
       if (req.user!.role !== "admin") {
         const TeamMember = require("../models/TeamMember").default;
         const teamMember = await TeamMember.findOne({
           userId: req.user!.id,
-          projectId: projectId,
+          projectId,
           status: "active",
         });
-
-        if (!teamMember) {
+        if (!teamMember)
           return res
             .status(403)
             .json({ message: "Not authorized to access this project" });
-        }
       } else if (String(project.userId) !== String(req.user!.id)) {
         return res
           .status(403)
@@ -202,18 +165,35 @@ router.get(
         .populate("projectId", "projectName")
         .sort({ uploadedAt: -1 });
 
-      res.json(documents);
+      // Generate fresh presigned URLs for each document
+      // (only needed when R2_PUBLIC_URL is not set)
+      const docsWithUrls = await Promise.all(
+        documents.map(async (doc) => {
+          const obj = doc.toObject() as any;
+          // If the stored URL is already a permanent public URL, use it as-is
+          // Otherwise refresh the signed URL using the stored R2 key
+          if (obj.r2Key && !process.env.R2_PUBLIC_URL) {
+            try {
+              obj.fileUrl = await getPresignedUrl(obj.r2Key, 3600 * 24); // 24h
+            } catch {
+              // keep existing URL
+            }
+          }
+          return obj;
+        })
+      );
+
+      res.json(docsWithUrls);
     } catch (error: any) {
       res
         .status(500)
         .json({ message: "Failed to fetch documents", error: error.message });
     }
-  },
+  }
 );
 
 // ============================================
-// POST /api/documents/upload - Upload document
-// ✅ UPDATED: Check project access for users
+// POST /api/documents/upload  ← USES R2 NOW
 // ============================================
 router.post(
   "/upload",
@@ -221,9 +201,8 @@ router.post(
   upload.single("file"),
   async (req: express.Request, res: express.Response) => {
     try {
-      if (!req.file) {
+      if (!req.file)
         return res.status(400).json({ message: "No file uploaded" });
-      }
 
       const { projectId } = req.body;
       if (!projectId)
@@ -233,20 +212,17 @@ router.post(
       if (!project)
         return res.status(404).json({ message: "Project not found" });
 
-      // Check project access for users/admins
       if (req.user!.role !== "admin") {
         const TeamMember = require("../models/TeamMember").default;
         const teamMember = await TeamMember.findOne({
           userId: req.user!.id,
-          projectId: projectId,
+          projectId,
           status: "active",
         });
-
-        if (!teamMember) {
+        if (!teamMember)
           return res
             .status(403)
             .json({ message: "Not authorized to upload to this project" });
-        }
       } else if (String(project.userId) !== String(req.user!.id)) {
         return res
           .status(403)
@@ -257,24 +233,19 @@ router.post(
       if (!userId)
         return res.status(401).json({ message: "User authentication error" });
 
-      const isPDF = req.file.mimetype === "application/pdf";
-      const isImage = req.file.mimetype.startsWith("image/");
-
-      const cloudinaryResult = await uploadToCloudinary(req.file.buffer, {
-        folder: "fitout-documents",
-        resource_type: isPDF || !isImage ? "raw" : "auto",
-        public_id: `${Date.now()}-${req.file.originalname.replace(/\.[^/.]+$/, "")}`,
-        format: req.file.originalname.split(".").pop(),
-      });
+      // ── Upload to R2 ──
+      const folder = `documents/${projectId}`;
+      const { fileUrl, key } = await uploadToR2(req.file, folder);
 
       const newDocument = await Document.create({
         fileName: req.file.originalname,
-        fileUrl: cloudinaryResult.secure_url,
+        fileUrl,
         fileSize: req.file.size,
         fileType: req.file.mimetype,
         projectId,
         uploadedBy: userId,
-        cloudinaryPublicId: cloudinaryResult.public_id,
+        // Store R2 key for later deletion/presigning
+        cloudinaryPublicId: key, // reusing this field to store R2 key
       });
 
       const populatedDocument = await Document.findById(newDocument._id)
@@ -286,7 +257,7 @@ router.post(
         userId,
         req.user!.name || "User",
         req.file.originalname,
-        req.user!.email,
+        req.user!.email
       );
 
       res.status(201).json({
@@ -294,16 +265,16 @@ router.post(
         document: populatedDocument,
       });
     } catch (error: any) {
+      console.error("Document upload error:", error);
       res
         .status(500)
         .json({ message: "Failed to upload", error: error.message });
     }
-  },
+  }
 );
 
 // ============================================
-// DELETE /api/documents/:id - Delete document
-// ✅ UPDATED: Check project access for users
+// DELETE /api/documents/:id  ← USES R2 NOW
 // ============================================
 router.delete(
   "/:id",
@@ -316,7 +287,6 @@ router.delete(
       if (!document)
         return res.status(404).json({ message: "Document not found" });
 
-      // Check project access for users
       if (req.user!.role !== "admin") {
         const TeamMember = require("../models/TeamMember").default;
         const teamMember = await TeamMember.findOne({
@@ -324,18 +294,17 @@ router.delete(
           projectId: document.projectId,
           status: "active",
         });
-
-        if (!teamMember) {
+        if (!teamMember)
           return res
             .status(403)
             .json({ message: "Not authorized to delete this document" });
-        }
       }
 
+      // ── Delete from R2 using the stored key ──
       if (document.cloudinaryPublicId) {
-        await cloudinary.uploader.destroy(document.cloudinaryPublicId, {
-          resource_type: "raw",
-        });
+        await deleteFromR2(document.cloudinaryPublicId).catch((err) =>
+          console.warn("[R2] Delete warning:", err)
+        );
       }
 
       await Document.findByIdAndDelete(id);
@@ -345,7 +314,7 @@ router.delete(
         req.user!.id,
         req.user!.name || "User",
         document.fileName,
-        req.user!.email,
+        req.user!.email
       );
 
       res.json({ message: "Document deleted successfully" });
@@ -354,12 +323,11 @@ router.delete(
         .status(500)
         .json({ message: "Failed to delete document", error: error.message });
     }
-  },
+  }
 );
 
 // ============================================
-// GET /api/documents/stats/overview - Document statistics
-// ✅ UPDATED: Filter based on user role
+// GET /api/documents/stats/overview
 // ============================================
 router.get(
   "/stats/overview",
@@ -369,10 +337,8 @@ router.get(
       let projectFilter: any = {};
 
       if (req.user!.role === "admin") {
-        // Tenant isolation: admin sees only own projects
         projectFilter = { userId: req.user!.id };
       } else {
-        // User sees only assigned projects
         const TeamMember = require("../models/TeamMember").default;
         const teamMembers = await TeamMember.find({
           userId: req.user!.id,
@@ -380,7 +346,6 @@ router.get(
         });
 
         const projectIds = teamMembers.map((tm: any) => tm.projectId);
-
         if (projectIds.length === 0) {
           return res.json({
             totalDocuments: 0,
@@ -398,20 +363,22 @@ router.get(
       const totalDocuments = await Document.countDocuments({
         projectId: { $in: projectIds },
       });
-      const totalProjects = projects.length;
-
       const documents = await Document.find({
         projectId: { $in: projectIds },
       });
       const totalSize = documents.reduce((sum, doc) => sum + doc.fileSize, 0);
 
-      res.json({ totalDocuments, totalProjects, totalSize });
+      res.json({
+        totalDocuments,
+        totalProjects: projects.length,
+        totalSize,
+      });
     } catch (error: any) {
       res
         .status(500)
         .json({ message: "Failed to fetch statistics", error: error.message });
     }
-  },
+  }
 );
 
 export default router;

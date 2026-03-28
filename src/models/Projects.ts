@@ -11,14 +11,15 @@ export interface IProject extends Document {
   region?: string;
   startDate?: Date;
   endDate?: Date;
-  calculatedStartDate?: Date; // NEW - Calculated from tasks
-  calculatedEndDate?: Date; // NEW - Calculated from tasks
-  scheduleFrom: 'start' | 'end'; // NEW - Scheduling anchor
-  isAtRisk: boolean; // NEW - Risk flag
-  riskReason?: string; // NEW - Risk reason
+  calculatedStartDate?: Date;
+  calculatedEndDate?: Date;
+  scheduleFrom: 'start' | 'end';
+  isAtRisk: boolean;
+  riskReason?: string;
   budget: number;
   spent: number;
-  status: 'Planning' | 'In Progress' | 'Completed' | 'On Hold';
+  // ✅ UPDATED: Added 'At Risk' and 'Cancelled' to status union
+  status: 'Planning' | 'In Progress' | 'At Risk' | 'Completed' | 'On Hold' | 'Cancelled';
   userId: mongoose.Types.ObjectId;
   createdBy: 'user' | 'admin';
   eacPolicyType?: 'factor' | 'manual';
@@ -65,22 +66,22 @@ const ProjectSchema: Schema = new Schema(
     endDate: {
       type: Date,
     },
-    calculatedStartDate: { // NEW
+    calculatedStartDate: {
       type: Date,
     },
-    calculatedEndDate: { // NEW
+    calculatedEndDate: {
       type: Date,
     },
-    scheduleFrom: { // NEW
+    scheduleFrom: {
       type: String,
       enum: ['start', 'end'],
       default: 'start',
     },
-    isAtRisk: { // NEW
+    isAtRisk: {
       type: Boolean,
       default: false,
     },
-    riskReason: { // NEW
+    riskReason: {
       type: String,
     },
     budget: {
@@ -91,9 +92,10 @@ const ProjectSchema: Schema = new Schema(
       type: Number,
       default: 0,
     },
+    // ✅ UPDATED: Expanded enum to include 'At Risk' and 'Cancelled'
     status: {
       type: String,
-      enum: ['Planning', 'In Progress', 'Completed', 'On Hold'],
+      enum: ['Planning', 'In Progress', 'At Risk', 'Completed', 'On Hold', 'Cancelled'],
       default: 'Planning',
     },
     userId: {

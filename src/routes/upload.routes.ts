@@ -1,21 +1,16 @@
+// src/routes/upload.routes.ts
+// UPDATED: Uses Cloudflare R2 instead of Cloudinary
+
 import express from "express";
 import { authMiddleware } from "../middleware/auth";
 import multer from "multer";
-import { v2 as cloudinary } from "cloudinary";
+import { uploadToR2, deleteFromR2, extractKeyFromUrl } from "../utils/r2Storage";
 
 const router = express.Router();
 
-// Configure Cloudinary
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
-
-// Configure multer for memory storage
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
   fileFilter: (req, file, cb) => {
     const allowedTypes = /jpeg|jpg|png|gif|pdf|doc|docx/;
     const mimeType = allowedTypes.test(file.mimetype);
@@ -24,14 +19,14 @@ const upload = multer({
     } else {
       cb(
         new Error(
-          "Invalid file type. Only images, PDFs, and documents are allowed.",
-        ),
+          "Invalid file type. Only images, PDFs, and documents are allowed."
+        )
       );
     }
   },
 });
 
-// Upload file to Cloudinary
+// ─── POST /api/upload ────────────────────────────────────────────────────────
 router.post(
   "/upload",
   authMiddleware,
@@ -54,22 +49,17 @@ router.post(
 
       const uploadedFiles = await Promise.all(
         uploadFiles.map(async (file) => {
-          const b64 = Buffer.from(file.buffer).toString("base64");
-          const dataURI = `data:${file.mimetype};base64,${b64}`;
-
-          const result = await cloudinary.uploader.upload(dataURI, {
-            folder: "fitout-manager/task-attachments",
-            resource_type: "auto",
-          });
+          const folder = "task-attachments";
+          const { fileUrl, key } = await uploadToR2(file, folder);
 
           return {
             fileName: file.originalname,
-            fileUrl: result.secure_url,
+            fileUrl,
             fileType: file.mimetype,
             fileSize: file.size,
-            publicId: result.public_id,
+            publicId: key, // R2 key (used to be Cloudinary publicId)
           };
-        }),
+        })
       );
 
       const firstFile = uploadedFiles[0];
@@ -78,7 +68,7 @@ router.post(
         message: "File uploaded successfully",
         file: firstFile,
         files: uploadedFiles,
-        urls: uploadedFiles.map((file) => file.fileUrl),
+        urls: uploadedFiles.map((f) => f.fileUrl),
       });
     } catch (error: any) {
       console.error("Upload error:", error);
@@ -86,19 +76,20 @@ router.post(
         .status(500)
         .json({ message: "Failed to upload file", error: error.message });
     }
-  },
+  }
 );
 
-// Delete file from Cloudinary (optional lang 'to)
+// ─── DELETE /api/upload/:publicId ────────────────────────────────────────────
+// publicId here is URL-encoded R2 key
 router.delete(
   "/upload/:publicId",
   authMiddleware,
   async (req: express.Request, res: express.Response) => {
     try {
       const { publicId } = req.params;
-      const decodedPublicId = decodeURIComponent(publicId);
+      const key = decodeURIComponent(publicId);
 
-      await cloudinary.uploader.destroy(decodedPublicId);
+      await deleteFromR2(key);
 
       res.json({ message: "File deleted successfully" });
     } catch (error: any) {
@@ -107,7 +98,7 @@ router.delete(
         .status(500)
         .json({ message: "Failed to delete file", error: error.message });
     }
-  },
+  }
 );
 
 export default router;

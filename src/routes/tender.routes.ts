@@ -1,5 +1,6 @@
 import express from "express";
 import multer from "multer";
+import crypto from "crypto";
 import { authMiddleware } from "../middleware/auth";
 import { requireAdmin } from "../middleware/permissions";
 import Tender from "../models/Tender";
@@ -15,6 +16,7 @@ import {
   sendTenderAwardedNotification,
   sendBidRejectedNotification,
   sendRFIAnsweredNotification,
+  APP_URL,
 } from "../services/emailService";
 
 const router = express.Router();
@@ -27,6 +29,8 @@ const tenderFileFields = upload.fields([
 ]);
 
 // ── Access helpers ──────────────────────────────────────────────
+
+const isValidObjectId = (id: string) => /^[a-f\d]{24}$/i.test(id);
 
 const canAccessProject = async (
   user: any,
@@ -77,31 +81,6 @@ router.get(
     } catch (error) {
       console.error("Get tenders error:", error);
       res.status(500).json({ message: "Failed to fetch tenders" });
-    }
-  },
-);
-
-// GET single tender with details
-router.get(
-  "/tenders/:tenderId",
-  authMiddleware,
-  async (req: express.Request, res: express.Response) => {
-    try {
-      const { tenderId } = req.params;
-      const hasAccess = await canAccessTender(req.user, tenderId);
-      if (!hasAccess)
-        return res.status(403).json({ message: "Not authorized to access this tender" });
-
-      const tender = await Tender.findById(tenderId).populate("createdBy", "name email");
-      if (!tender) return res.status(404).json({ message: "Tender not found" });
-
-      const bids = await TenderBid.find({ tenderId }).sort({ bidAmount: 1 });
-      const rfis = await TenderRFI.find({ tenderId }).sort({ askedAt: -1 });
-
-      res.json({ ...tender.toObject(), bids, rfis });
-    } catch (error) {
-      console.error("Get tender error:", error);
-      res.status(500).json({ message: "Failed to fetch tender" });
     }
   },
 );
@@ -212,6 +191,19 @@ router.put(
         return res.status(400).json({ message: "Invalid JSON in one of the array fields" });
       }
 
+      // ── Preserve existing tokens; generate for newly added contractors ──
+      const existingContractors: any[] = tender.shortlistedContractors || [];
+      parsedContractors = parsedContractors.map((c: any) => {
+        const existing = existingContractors.find(
+          (e: any) => String(e.contractorId) === String(c.contractorId),
+        );
+        return {
+          ...c,
+          bidToken:    existing?.bidToken    || crypto.randomBytes(32).toString("hex"),
+          tokenExpiry: existing?.tokenExpiry || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        };
+      });
+
       const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
       const buildDocuments = (fieldFiles: Express.Multer.File[] | undefined, section: string) =>
         (fieldFiles || []).map((f) => ({
@@ -259,7 +251,7 @@ router.put(
               tenderTitle:       title,
               projectName,
               changeDescription: changeDescription || "Tender details have been updated.",
-              submissionDeadline,
+              bidSubmissionUrl:  `${APP_URL}/contractor/bid/${c.bidToken}`,
             }).catch((err) =>
               console.error(`[SES] Failed to notify ${c.email}:`, err?.message),
             ),
@@ -275,7 +267,7 @@ router.put(
   },
 );
 
-// ISSUE tender — sends invitation emails to all shortlisted contractors
+// ISSUE tender — generates per-contractor tokens and sends invitation emails
 router.post(
   "/tenders/:tenderId/issue",
   authMiddleware,
@@ -294,20 +286,20 @@ router.post(
       if (!tender.shortlistedContractors || tender.shortlistedContractors.length === 0)
         return res.status(400).json({ message: "Please shortlist contractors before issuing tender" });
 
-      // Update tender status first
+      // ── Generate a unique bid token for each contractor ──
       tender.status = "Issued";
       tender.issueDate = new Date();
       tender.shortlistedContractors = tender.shortlistedContractors.map((c: any) => ({
         ...c,
-        invitedAt: new Date(),
+        invitedAt:   new Date(),
+        bidToken:    c.bidToken    || crypto.randomBytes(32).toString("hex"),
+        tokenExpiry: c.tokenExpiry || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       }));
       await tender.save();
 
-      // Fetch project name for email content
       const project = await Project.findById(tender.projectId).select("projectName");
       const projectName = (project as any)?.projectName || "Your Project";
 
-      // ── EMAIL: send invitation to every shortlisted contractor ──
       const emailResults = await Promise.allSettled(
         tender.shortlistedContractors.map((c: any) =>
           sendTenderInvitation({
@@ -321,6 +313,7 @@ router.post(
             submissionDeadline:     tender.submissionDeadline?.toISOString(),
             scopeOfWorks:           tender.scopeOfWorks,
             complianceRequirements: tender.complianceRequirements,
+            bidSubmissionUrl:       `${APP_URL}/contractor/bid/${c.bidToken}`,
           }),
         ),
       );
@@ -379,6 +372,7 @@ router.delete(
 
 // ==================== BID ROUTES ====================
 
+// GET all bids for a tender
 router.get(
   "/tenders/:tenderId/bids",
   authMiddleware,
@@ -400,6 +394,43 @@ router.get(
   },
 );
 
+// GET single bid by ID — used by BidDetailModal
+// ⚠️ Must be defined BEFORE GET /tenders/:tenderId to prevent route shadowing
+router.get(
+  "/tenders/:tenderId/bids/:bidId",
+  authMiddleware,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { tenderId, bidId } = req.params;
+
+      // Validate ObjectId format before hitting MongoDB
+      if (!isValidObjectId(tenderId) || !isValidObjectId(bidId)) {
+        return res.status(400).json({ message: "Invalid tender or bid ID format" });
+      }
+
+      const hasAccess = await canAccessTender(req.user, tenderId);
+      if (!hasAccess)
+        return res.status(403).json({ message: "Not authorized to access this tender" });
+
+      // Use findById + lean() — avoids populate crash if reviewedBy not in schema
+      const bid = await TenderBid.findById(bidId).lean();
+
+      if (!bid) return res.status(404).json({ message: "Bid not found" });
+
+      // Verify bid actually belongs to this tender
+      if (String(bid.tenderId) !== tenderId) {
+        return res.status(403).json({ message: "Bid does not belong to this tender" });
+      }
+
+      res.json(bid);
+    } catch (error: any) {
+      console.error("Get bid detail error:", error?.message || error);
+      res.status(500).json({ message: "Failed to fetch bid details", detail: error?.message });
+    }
+  },
+);
+
+// CREATE / UPDATE bid (upsert)
 router.post(
   "/tenders/:tenderId/bids",
   authMiddleware,
@@ -486,6 +517,9 @@ router.post(
               contractorName:    bid.contractorName || "Contractor",
               contractorCompany: (contractor as any)?.companyName || "",
               bidAmount:         bid.bidAmount,
+              contractorEmail:   bid.contractorEmail || "",
+              submittedAt:       bid.submittedAt?.toISOString() ?? new Date().toISOString(),
+              reviewUrl:         `${APP_URL}/admin/projects/${tender.projectId}/tender/${tenderId}`,
             }).catch((err) => console.error("[SES] Bid received notification failed:", err?.message));
           }
         } catch {
@@ -553,11 +587,11 @@ router.post(
       const winningBid = await TenderBid.findById(bidId);
       if (!winningBid) return res.status(404).json({ message: "Bid not found" });
 
-      tender.status             = "Awarded";
+      tender.status              = "Awarded";
       tender.awardedContractorId = winningBid.contractorId;
-      tender.awardedAmount      = winningBid.bidAmount;
-      tender.awardedReason      = awardedReason;
-      tender.awardDate          = new Date();
+      tender.awardedAmount       = winningBid.bidAmount;
+      tender.awardedReason       = awardedReason;
+      tender.awardDate           = new Date();
       await tender.save();
 
       winningBid.status = "Accepted";
@@ -677,8 +711,8 @@ router.put(
       if (!hasAccess)
         return res.status(403).json({ message: "Not authorized to access this tender" });
 
-      rfi.response  = response;
-      rfi.status    = "Answered";
+      rfi.response   = response;
+      rfi.status     = "Answered";
       rfi.answeredAt = new Date();
       rfi.answeredBy = req.user!.id;
       await rfi.save();
@@ -835,6 +869,35 @@ router.post(
     } catch (error) {
       console.error("AI recommendations error:", error);
       res.status(500).json({ message: "Failed to generate recommendations" });
+    }
+  },
+);
+
+// ==================== GET SINGLE TENDER ====================
+// ⚠️ MUST remain at the bottom — registering this earlier causes Express
+// to match /tenders/:tenderId before reaching more-specific sub-routes
+// like /tenders/:tenderId/bids/:bidId, resulting in 404s.
+
+router.get(
+  "/tenders/:tenderId",
+  authMiddleware,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { tenderId } = req.params;
+      const hasAccess = await canAccessTender(req.user, tenderId);
+      if (!hasAccess)
+        return res.status(403).json({ message: "Not authorized to access this tender" });
+
+      const tender = await Tender.findById(tenderId).populate("createdBy", "name email");
+      if (!tender) return res.status(404).json({ message: "Tender not found" });
+
+      const bids = await TenderBid.find({ tenderId }).sort({ bidAmount: 1 });
+      const rfis = await TenderRFI.find({ tenderId }).sort({ askedAt: -1 });
+
+      res.json({ ...tender.toObject(), bids, rfis });
+    } catch (error) {
+      console.error("Get tender error:", error);
+      res.status(500).json({ message: "Failed to fetch tender" });
     }
   },
 );
