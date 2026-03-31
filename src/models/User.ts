@@ -7,8 +7,17 @@ export interface IUser extends Document {
   password: string;
   role: "user" | "admin";
   roleId?: mongoose.Types.ObjectId;
+  managedByAdminId?: mongoose.Types.ObjectId;
   tokenVersion: number;
   subscriptionType?: string;
+  stripeCustomerId?: string;
+  stripeSubscriptionId?: string;
+  stripePriceId?: string;
+  subscriptionStatus?: string;
+  subscriptionCurrentPeriodStart?: Date;
+  subscriptionCurrentPeriodEnd?: Date;
+  subscriptionCancelAtPeriodEnd?: boolean;
+  lastRenewalReminderForPeriodEnd?: Date;
   isActive: boolean;
 
   // Profile fields
@@ -66,6 +75,12 @@ const userSchema = new Schema<IUser>(
       ref: "Role",
       required: false,
     },
+    managedByAdminId: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      required: false,
+      index: true,
+    },
     tokenVersion: {
       type: Number,
       default: 0,
@@ -74,6 +89,47 @@ const userSchema = new Schema<IUser>(
       type: String,
       enum: ["Starter", "Team", "Enterprise"],
       default: "Starter",
+    },
+    stripeCustomerId: {
+      type: String,
+      trim: true,
+      index: true,
+    },
+    stripeSubscriptionId: {
+      type: String,
+      trim: true,
+      index: true,
+    },
+    stripePriceId: {
+      type: String,
+      trim: true,
+    },
+    subscriptionStatus: {
+      type: String,
+      enum: [
+        "incomplete",
+        "incomplete_expired",
+        "trialing",
+        "active",
+        "past_due",
+        "canceled",
+        "unpaid",
+        "paused",
+      ],
+      default: "incomplete",
+    },
+    subscriptionCurrentPeriodStart: {
+      type: Date,
+    },
+    subscriptionCurrentPeriodEnd: {
+      type: Date,
+    },
+    subscriptionCancelAtPeriodEnd: {
+      type: Boolean,
+      default: false,
+    },
+    lastRenewalReminderForPeriodEnd: {
+      type: Date,
     },
     isActive: {
       type: Boolean,

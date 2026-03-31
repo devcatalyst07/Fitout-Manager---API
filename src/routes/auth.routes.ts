@@ -17,7 +17,8 @@ import { cacheUser, invalidateUserCache } from "../utils/cache";
 import { authRateLimiter } from "../middleware/security";
 import { cleanupUnverifiedUsers } from "../utils/cleanup";
 import { generateFingerprint } from "../middleware/security";
-import { sendEmail } from "../utils/ses";
+import { sendEmail as sendAppEmail } from "../services/emailService";
+import { isAdminSubscriptionActive } from "../services/subscriptionService";
 
 const router = express.Router();
 
@@ -36,10 +37,10 @@ const sendVerificationCodeEmail = async (
 ): Promise<void> => {
   const appName = process.env.APP_NAME || "Fitout Manager";
 
-  await sendEmail(
-    targetEmail,
-    `Verify your ${appName} account`,
-    `
+  const sent = await sendAppEmail({
+    to: targetEmail,
+    subject: `Verify your ${appName} account`,
+    html: `
       <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto;">
         <h2 style="color: #111;">Email Verification Code</h2>
         <p>Hello ${name},</p>
@@ -53,7 +54,11 @@ const sendVerificationCodeEmail = async (
         <p style="color: #aaa; font-size: 12px;">${appName}</p>
       </div>
     `,
-  );
+  });
+
+  if (!sent) {
+    throw new Error("Failed to send verification email");
+  }
 };
 
 // ─── Routes ─────────────────────────────────────────────────────
@@ -221,6 +226,20 @@ router.post(
           message:
             "You do not have a role assigned. Please contact an administrator.",
           code: "NO_ROLE_ASSIGNED",
+        });
+      }
+
+      // Admins must have an active paid subscription (except the superadmin account).
+      const SUPERADMIN_EMAIL = "superadmin@fitoutmanager.com";
+      if (
+        user.role === "admin" &&
+        user.email !== SUPERADMIN_EMAIL &&
+        !isAdminSubscriptionActive(user)
+      ) {
+        return res.status(402).json({
+          message:
+            "Your subscription is inactive or unpaid. Please complete payment to continue.",
+          code: "SUBSCRIPTION_INACTIVE",
         });
       }
 
@@ -777,15 +796,15 @@ router.post(
         }
       }
 
-      // Send email notification to admin via SES
+      // Send email notification to admin
       try {
         const appName = process.env.APP_NAME || "Fitout Manager";
         const dashboardUrl = `${process.env.APP_URL || "http://localhost:3000"}/admin/dashboard`;
 
-        await sendEmail(
-          adminEmail,
-          `Role Assignment Request from ${user.name} — ${appName}`,
-          `
+        const sent = await sendAppEmail({
+          to: adminEmail,
+          subject: `Role Assignment Request from ${user.name} — ${appName}`,
+          html: `
             <div style="font-family: Arial, sans-serif; max-width: 520px; margin: 0 auto;">
               <h2 style="color: #111;">Role Assignment Request</h2>
               <p>A new user has requested role assignment:</p>
@@ -817,9 +836,13 @@ router.post(
               <p style="color: #aaa; font-size: 12px;">${appName}</p>
             </div>
           `,
-        );
+        });
 
-        console.log("📧 Role request email sent to:", adminEmail);
+        if (sent) {
+          console.log("📧 Role request email sent to:", adminEmail);
+        } else {
+          console.warn("⚠️ Role request email was not sent");
+        }
       } catch (emailError: any) {
         console.error("⚠️ Email send failed (request still processed):", emailError.message);
       }

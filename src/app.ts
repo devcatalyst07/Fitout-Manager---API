@@ -39,6 +39,7 @@ import tenderRoutes from "./routes/tender.routes";
 import notificationRoutes from "./routes/notification.routes";
 import contractorRoutes from "./routes/contractor.routes";
 import publicRoutes from "./routes/public.routes";
+import paymentRoutes, { stripeWebhookHandler } from "./routes/payment.routes";
 
 const app = express();
 
@@ -84,6 +85,13 @@ app.use(
 // Security headers
 app.use(securityHeaders);
 app.use(customSecurityHeaders);
+
+// Stripe webhook must receive raw body for signature verification.
+app.post(
+  "/api/payments/webhook",
+  express.raw({ type: "application/json" }),
+  stripeWebhookHandler,
+);
 
 // Body parsers
 app.use(express.json({ limit: "10mb" }));
@@ -157,6 +165,7 @@ app.use("/api", tenderRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/contractors", contractorRoutes);
 app.use("/api/public", publicRoutes);
+app.use("/api/payments", paymentRoutes);
 
 // 404 Handler
 app.use((req, res) => {

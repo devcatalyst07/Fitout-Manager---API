@@ -7,6 +7,7 @@ import Notification from "../models/Notification";
 import Role from "../models/Role";
 import { invalidateUserCache } from "../utils/cache";
 import nodemailer from "nodemailer";
+import { assertMemberSeatAvailable } from "../services/subscriptionService";
 
 const router = express.Router();
 
@@ -174,7 +175,16 @@ router.get(
   adminOnly,
   async (req: express.Request, res: express.Response) => {
     try {
-      const users = await User.find({ role: "user" })
+      const adminId = req.user!.id;
+      const adminEmail = (req.user!.email || "").toLowerCase();
+
+      const users = await User.find({
+        role: "user",
+        $or: [
+          { managedByAdminId: adminId },
+          { roleRequestPending: true, roleRequestSentTo: adminEmail },
+        ],
+      })
         .select(
           "name email username isActive emailVerified roleId roleRequestPending roleRequestSentTo roleRequestSentAt createdAt",
         )
@@ -221,6 +231,26 @@ router.put(
         return res.status(404).json({ message: "User not found" });
       }
 
+      const adminId = req.user!.id;
+
+      if (
+        user.managedByAdminId &&
+        user.managedByAdminId.toString() !== adminId
+      ) {
+        return res.status(403).json({
+          message: "This user is managed by another admin.",
+          code: "FORBIDDEN_USER_SCOPE",
+        });
+      }
+
+      const adminUser = await User.findById(adminId);
+      if (!adminUser || adminUser.role !== "admin") {
+        return res.status(403).json({
+          message: "Admin account not found",
+          code: "ADMIN_NOT_FOUND",
+        });
+      }
+
       // Track if we're removing a role
       const isPreviouslyAssigned = !!user.roleId;
       const isRemoving = !roleId;
@@ -239,13 +269,34 @@ router.put(
       }
 
       // roleId can be null to remove role assignment
-      await User.findByIdAndUpdate(userId, {
+      const shouldConsumeSeat = !user.roleId && !!roleId;
+
+      if (shouldConsumeSeat) {
+        try {
+          await assertMemberSeatAvailable(adminUser);
+        } catch (seatError: any) {
+          return res.status(409).json({
+            message: seatError.message || "Seat limit reached for current plan",
+            code: seatError.code || "SUBSCRIPTION_SEAT_LIMIT_REACHED",
+          });
+        }
+      }
+
+      const updatePayload: any = {
         roleId: roleId || null,
         // Clear pending role request flags when assigning role
         roleRequestPending: false,
         roleRequestSentTo: undefined,
         roleRequestSentAt: undefined,
-      });
+      };
+
+      if (roleId) {
+        updatePayload.managedByAdminId = adminId;
+      } else {
+        updatePayload.$unset = { managedByAdminId: 1 };
+      }
+
+      await User.findByIdAndUpdate(userId, updatePayload);
 
       // Send notification to user if role was assigned (not removed)
       if (roleId && roleInfo) {
