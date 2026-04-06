@@ -40,6 +40,7 @@ import notificationRoutes from "./routes/notification.routes";
 import contractorRoutes from "./routes/contractor.routes";
 import publicRoutes from "./routes/public.routes";
 import paymentRoutes, { stripeWebhookHandler } from "./routes/payment.routes";
+import messageRoutes from "./routes/message.routes";
 
 const app = express();
 
@@ -166,6 +167,7 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/contractors", contractorRoutes);
 app.use("/api/public", publicRoutes);
 app.use("/api/payments", paymentRoutes);
+app.use("/api/messages", messageRoutes);
 
 // 404 Handler
 app.use((req, res) => {

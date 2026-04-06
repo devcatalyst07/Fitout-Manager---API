@@ -121,6 +121,11 @@ router.post("/", authMiddleware, adminOnly, async (req: express.Request, res: ex
         checked: false,
       },
       {
+        id: "messages",
+        label: "Messages",
+        checked: false,
+      },
+      {
         id: "team",
         label: "Team",
         checked: false,
