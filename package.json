@@ -1,7 +1,7 @@
 {
   "name": "fitout-manager-api",
   "version": "1.0.0",
-  "main": "dist/server.js",
+  "main": "dist/server.prod.js",
   "engines": {
     "node": "22.x"
   },
@@ -10,7 +10,7 @@
     "dev:serverless": "ts-node src/server.ts",
     "build": "tsc",
     "postinstall": "npm run build",
-    "start": "node dist/server.js",
+    "start": "node dist/server.prod.js",
     "vercel-build": "npm run build",
     "type-check": "tsc --noEmit"
   },
