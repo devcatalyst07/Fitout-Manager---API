@@ -8,7 +8,6 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "moduleResolution": "node",
-    "ignoreDeprecations": "6.0",
     "allowJs": true,
     "forceConsistentCasingInFileNames": true,
     "typeRoots": ["./node_modules/@types"]
