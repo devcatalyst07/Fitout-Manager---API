@@ -4,6 +4,7 @@ export interface IConversation extends Document {
   type: "direct" | "group";
   name?: string;
   participants: mongoose.Types.ObjectId[];
+  mutedBy: mongoose.Types.ObjectId[];
   adminId: mongoose.Types.ObjectId;
   createdBy: mongoose.Types.ObjectId;
   lastMessage?: mongoose.Types.ObjectId;
@@ -28,6 +29,12 @@ const ConversationSchema = new Schema<IConversation>(
         type: Schema.Types.ObjectId,
         ref: "User",
         required: true,
+      },
+    ],
+    mutedBy: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: "User",
       },
     ],
     adminId: {
