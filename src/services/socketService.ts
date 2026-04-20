@@ -64,16 +64,20 @@ export const initSocketIO = (httpServer: HttpServer): Server => {
     socket.on(
       "message:send",
       async (
-        data: { conversationId: string; text: string },
+        data: { conversationId: string; text: string; attachments?: any[] },
         ack?: (resp: any) => void,
       ) => {
         try {
-          if (!data.text?.trim()) return;
+          const text = data.text?.trim() || "";
+          const hasAttachments = Array.isArray(data.attachments) &&
+            data.attachments.length > 0;
+          if (!text && !hasAttachments) return;
 
           const message = await messageService.sendMessage(
             data.conversationId,
             userId,
-            data.text.trim(),
+            text,
+            data.attachments,
           );
 
           // Broadcast to all participants in the conversation room
@@ -81,14 +85,17 @@ export const initSocketIO = (httpServer: HttpServer): Server => {
 
           // Also push a lightweight event to each participant's personal room
           // so their conversation list updates even if they haven't joined
-          const convo = await (
-            await import("../models/Conversation")
-          ).default.findById(data.conversationId).lean();
+          const conversationModule = await import("../models/Conversation.js");
+          const ConversationModel = (conversationModule as any).default;
+          const convo = await ConversationModel.findById(data.conversationId).lean();
 
           if (convo) {
+            const mutedBy = Array.isArray((convo as any).mutedBy)
+              ? (convo as any).mutedBy.map((id: any) => id.toString())
+              : [];
             for (const pid of convo.participants) {
               const pidStr = pid.toString();
-              if (pidStr !== userId) {
+              if (pidStr !== userId && !mutedBy.includes(pidStr)) {
                 io!.to(`user:${pidStr}`).emit("conversation:updated", {
                   conversationId: data.conversationId,
                   lastMessage: message,

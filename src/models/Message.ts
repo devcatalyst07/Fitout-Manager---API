@@ -29,8 +29,11 @@ const MessageSchema = new Schema<IMessage>(
     },
     text: {
       type: String,
-      required: true,
       trim: true,
+      required: function (this: any) {
+        return !this.attachments || this.attachments.length === 0;
+      },
+      default: "",
     },
     attachments: [
       {

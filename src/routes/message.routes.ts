@@ -116,6 +116,64 @@ router.post(
   },
 );
 
+// ─── Search messages in a conversation (MUST BE BEFORE :conversationId/messages) ──
+router.get(
+  "/conversations/:conversationId/search",
+  authMiddleware,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { conversationId } = req.params;
+      const query = (req.query.q as string) || "";
+      const messages = await messageService.searchConversationMessages(
+        conversationId,
+        req.user!.id,
+        query,
+      );
+      res.json(messages);
+    } catch (error: any) {
+      console.error("Search messages error:", error);
+      res.status(500).json({ message: "Failed to search messages" });
+    }
+  },
+);
+
+// ─── Mark conversation as read ──────────────────────────────────────────
+router.post(
+  "/conversations/:conversationId/read",
+  authMiddleware,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { conversationId } = req.params;
+      await messageService.markConversationRead(conversationId, req.user!.id);
+      res.json({ message: "Marked as read" });
+    } catch (error: any) {
+      console.error("Mark read error:", error);
+      res.status(500).json({ message: "Failed to mark as read" });
+    }
+  },
+);
+
+// ─── Mute/unmute conversation notifications ───────────────────────────
+router.post(
+  "/conversations/:conversationId/mute",
+  authMiddleware,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { conversationId } = req.params;
+      const { muted } = req.body;
+      const result = await messageService.setConversationMuted(
+        conversationId,
+        req.user!.id,
+        Boolean(muted),
+      );
+      res.json(result);
+    } catch (error: any) {
+      console.error("Mute conversation error:", error);
+      res.status(500).json({ message: "Failed to update mute status" });
+    }
+  },
+);
+
 // ─── Get messages for a conversation (paginated) ────────────────────────
 router.get(
   "/conversations/:conversationId/messages",
@@ -146,38 +204,27 @@ router.post(
   async (req: express.Request, res: express.Response) => {
     try {
       const { conversationId } = req.params;
-      const { text } = req.body;
+      const { text, attachments } = req.body;
 
-      if (!text?.trim()) {
-        return res.status(400).json({ message: "Message text is required" });
+      const cleanText = text?.trim();
+      const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+      if (!cleanText && !hasAttachments) {
+        return res.status(400).json({
+          message: "Message text or attachments are required",
+        });
       }
 
       const message = await messageService.sendMessage(
         conversationId,
         req.user!.id,
-        text.trim(),
+        cleanText || "",
+        attachments,
       );
 
       res.status(201).json(message);
     } catch (error: any) {
       console.error("Send message error:", error);
       res.status(500).json({ message: "Failed to send message" });
-    }
-  },
-);
-
-// ─── Mark conversation as read ──────────────────────────────────────────
-router.post(
-  "/conversations/:conversationId/read",
-  authMiddleware,
-  async (req: express.Request, res: express.Response) => {
-    try {
-      const { conversationId } = req.params;
-      await messageService.markConversationRead(conversationId, req.user!.id);
-      res.json({ message: "Marked as read" });
-    } catch (error: any) {
-      console.error("Mark read error:", error);
-      res.status(500).json({ message: "Failed to mark as read" });
     }
   },
 );

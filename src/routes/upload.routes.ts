@@ -10,16 +10,16 @@ const router = express.Router();
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB
   fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|gif|pdf|doc|docx/;
+    const allowedTypes = /jpeg|jpg|png|gif|pdf|doc|docx|xls|xlsx|plain|text/;
     const mimeType = allowedTypes.test(file.mimetype);
     if (mimeType) {
       cb(null, true);
     } else {
       cb(
         new Error(
-          "Invalid file type. Only images, PDFs, and documents are allowed."
+          "Invalid file type. Only images, PDFs, Word, Excel, and text files are allowed."
         )
       );
     }
@@ -45,6 +45,13 @@ router.post(
 
       if (uploadFiles.length === 0) {
         return res.status(400).json({ message: "No file uploaded" });
+      }
+
+      const totalSize = uploadFiles.reduce((sum, file) => sum + file.size, 0);
+      if (totalSize > 100 * 1024 * 1024) {
+        return res.status(400).json({
+          message: "Total upload size cannot exceed 100MB",
+        });
       }
 
       const uploadedFiles = await Promise.all(

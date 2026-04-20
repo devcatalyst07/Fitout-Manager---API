@@ -60,8 +60,9 @@ export const getTeamMembers = async (
  * List conversations the user participates in, enriched with last message.
  */
 export const getUserConversations = async (userId: string) => {
+  const userObjectId = new mongoose.Types.ObjectId(userId);
   const conversations = await Conversation.find({
-    participants: new mongoose.Types.ObjectId(userId),
+    participants: userObjectId,
   })
     .populate("participants", "name email role")
     .populate({
@@ -77,10 +78,14 @@ export const getUserConversations = async (userId: string) => {
     conversations.map(async (convo) => {
       const unreadCount = await Message.countDocuments({
         conversationId: convo._id,
-        readBy: { $ne: new mongoose.Types.ObjectId(userId) },
-        senderId: { $ne: new mongoose.Types.ObjectId(userId) },
+        readBy: { $ne: userObjectId },
+        senderId: { $ne: userObjectId },
       });
-      return { ...convo, unreadCount };
+      const mutedBy = Array.isArray((convo as any).mutedBy)
+        ? (convo as any).mutedBy
+        : [];
+      const isMuted = mutedBy.some((id: any) => id.toString() === userId);
+      return { ...convo, unreadCount, isMuted };
     }),
   );
 
@@ -213,4 +218,73 @@ export const markConversationRead = async (
     },
     { $addToSet: { readBy: new mongoose.Types.ObjectId(userId) } },
   );
+};
+
+/**
+ * Mute/unmute a conversation for a specific user.
+ */
+export const setConversationMuted = async (
+  conversationId: string,
+  userId: string,
+  muted: boolean,
+) => {
+  const userObjectId = new mongoose.Types.ObjectId(userId);
+  const conversationObjectId = new mongoose.Types.ObjectId(conversationId);
+
+  const conversation = await Conversation.findOne({
+    _id: conversationObjectId,
+    participants: userObjectId,
+  });
+  if (!conversation) {
+    throw new Error("Conversation not found");
+  }
+
+  if (muted) {
+    await Conversation.findByIdAndUpdate(conversationObjectId, {
+      $addToSet: { mutedBy: userObjectId },
+    });
+  } else {
+    await Conversation.findByIdAndUpdate(conversationObjectId, {
+      $pull: { mutedBy: userObjectId },
+    });
+  }
+
+  return { conversationId, muted };
+};
+
+/**
+ * Search messages in a specific conversation for a user.
+ */
+export const searchConversationMessages = async (
+  conversationId: string,
+  userId: string,
+  query: string,
+) => {
+  const userObjectId = new mongoose.Types.ObjectId(userId);
+  const conversationObjectId = new mongoose.Types.ObjectId(conversationId);
+
+  const conversation = await Conversation.findOne({
+    _id: conversationObjectId,
+    participants: userObjectId,
+  }).select("_id");
+  if (!conversation) {
+    throw new Error("Conversation not found");
+  }
+
+  const trimmedQuery = query.trim();
+  if (!trimmedQuery) return [];
+
+  const escaped = trimmedQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const regex = new RegExp(escaped, "i");
+
+  const messages = await Message.find({
+    conversationId: conversationObjectId,
+    text: { $regex: regex },
+  })
+    .populate("senderId", "name email")
+    .sort({ createdAt: -1 })
+    .limit(100)
+    .lean();
+
+  return messages;
 };
