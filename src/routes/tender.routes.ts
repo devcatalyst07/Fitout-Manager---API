@@ -9,6 +9,7 @@ import TenderRFI from "../models/TenderRFI";
 import Contractor from "../models/Contractor";
 import Project from "../models/Projects";
 import TeamMember from "../models/TeamMember";
+import BudgetItem from "../models/BudgetItem";
 import { uploadToR2, deleteFromR2 } from "../utils/r2Storage";
 import {
   sendTenderInvitation,
@@ -61,7 +62,7 @@ const canAccessTender = async (
   return canAccessProject(user, String((tender as any).projectId));
 };
 
-// ── R2 upload helper (mirrors document.routes.ts pattern) ───────
+// ── R2 upload helper ────────────────────────────────────────────
 
 const uploadDocuments = async (
   fieldFiles: Express.Multer.File[] | undefined,
@@ -82,7 +83,7 @@ const uploadDocuments = async (
           fileType:           fieldFiles[i].mimetype,
           fileSize:           fieldFiles[i].size,
           fileUrl:            result.value.fileUrl,
-          cloudinaryPublicId: result.value.key, // reuse field to store R2 key
+          cloudinaryPublicId: result.value.key,
           section,
           uploadedAt:         new Date(),
         };
@@ -97,7 +98,7 @@ const uploadDocuments = async (
     .filter(Boolean);
 };
 
-// ── R2 delete helper for removed documents ──────────────────────
+// ── R2 delete helper ────────────────────────────────────────────
 
 const deleteDocumentsFromR2 = async (docs: any[]): Promise<void> => {
   await Promise.allSettled(
@@ -109,6 +110,36 @@ const deleteDocumentsFromR2 = async (docs: any[]): Promise<void> => {
         ),
       ),
   );
+};
+
+// ── Budget category helper ──────────────────────────────────────
+
+const BUDGET_CATEGORIES = [
+  "Design", "Approvals", "Construction", "Joinery", "MEP",
+  "Fixtures", "Contingency", "Professional Fees", "Other", "Misc",
+] as const;
+
+const mapTenderCategoryToBudget = (category: string): string =>
+  BUDGET_CATEGORIES.includes(category as any) ? category : "Other";
+
+// ── Recalculate project.spent ───────────────────────────────────
+
+const recalculateProjectSpent = async (projectId: any): Promise<void> => {
+  try {
+    const agg = await BudgetItem.aggregate([
+      { $match: { projectId } },
+      {
+        $group: {
+          _id:   null,
+          total: { $sum: { $multiply: ["$quantity", "$unitCost"] } },
+        },
+      },
+    ]);
+    const spent = agg.length > 0 ? (agg[0].total as number) : 0;
+    await Project.findByIdAndUpdate(projectId, { spent });
+  } catch (err) {
+    console.error("[Budget] recalculateProjectSpent error:", err);
+  }
 };
 
 // ==================== TENDER ROUTES ====================
@@ -176,8 +207,7 @@ router.post(
       const parsedBudget = parseFloat(budgetedAmount);
       if (!title || isNaN(parsedBudget) || parsedBudget <= 0)
         return res.status(400).json({
-          message:
-            "Title and a valid budgeted amount (> 0) are required",
+          message: "Title and a valid budgeted amount (> 0) are required",
         });
 
       let parsedCompliance: string[] = [];
@@ -191,12 +221,10 @@ router.post(
           : [];
       } catch {
         return res.status(400).json({
-          message:
-            "Invalid JSON in complianceRequirements or shortlistedContractors",
+          message: "Invalid JSON in complianceRequirements or shortlistedContractors",
         });
       }
 
-      // ── Upload files to R2 ──────────────────────────────────
       const files =
         req.files as
           | { [fieldname: string]: Express.Multer.File[] }
@@ -209,7 +237,6 @@ router.post(
         uploadDocuments(files?.["general_files"],  "general",        folder),
       ]);
       const allDocs = [...scopeDocs, ...specDocs, ...generalDocs];
-      // ────────────────────────────────────────────────────────
 
       const newTender = await Tender.create({
         projectId,
@@ -312,7 +339,6 @@ router.put(
           .json({ message: "Invalid JSON in one of the array fields" });
       }
 
-      // ── Preserve existing tokens; generate for newly added contractors ──
       const existingContractors: any[] = tender.shortlistedContractors || [];
       parsedContractors = parsedContractors.map((c: any) => {
         const existing = existingContractors.find(
@@ -325,14 +351,11 @@ router.put(
         };
       });
 
-      // ── Delete removed docs from R2 ─────────────────────────
       const docsToRemove = ((tender as any).documents || []).filter(
         (d: any) => parsedRemovedIds.includes(String(d._id)),
       );
       await deleteDocumentsFromR2(docsToRemove);
-      // ────────────────────────────────────────────────────────
 
-      // ── Upload new files to R2 ──────────────────────────────
       const files =
         req.files as
           | { [fieldname: string]: Express.Multer.File[] }
@@ -345,9 +368,7 @@ router.put(
         uploadDocuments(files?.["general_files"],  "general",        folder),
       ]);
       const newDocs = [...scopeDocs, ...specDocs, ...generalDocs];
-      // ────────────────────────────────────────────────────────
 
-      // Keep existing docs that were not removed
       const existingDocs = ((tender as any).documents || []).filter(
         (d: any) => !parsedRemovedIds.includes(String(d._id)),
       );
@@ -371,11 +392,8 @@ router.put(
         { new: true, runValidators: true },
       ).populate("createdBy", "name email");
 
-      // ── EMAIL: notify all shortlisted contractors if tender is already Issued ──
       if (tender.status === "Issued" && parsedContractors.length > 0) {
-        const project = await Project.findById(tender.projectId).select(
-          "projectName",
-        );
+        const project = await Project.findById(tender.projectId).select("projectName");
         const projectName = (project as any)?.projectName || "Your Project";
 
         await Promise.allSettled(
@@ -389,10 +407,7 @@ router.put(
               changeDescription: changeDescription || "Tender details have been updated.",
               bidSubmissionUrl:  `${APP_URL}/contractor/bid/${c.bidToken}`,
             }).catch((err) =>
-              console.error(
-                `[Email] Failed to notify ${c.email}:`,
-                err?.message,
-              ),
+              console.error(`[Email] Failed to notify ${c.email}:`, err?.message),
             ),
           ),
         );
@@ -406,7 +421,7 @@ router.put(
   },
 );
 
-// ISSUE tender — generates per-contractor tokens and sends invitation emails
+// ISSUE tender
 router.post(
   "/tenders/:tenderId/issue",
   authMiddleware,
@@ -439,7 +454,6 @@ router.post(
           message: "Please shortlist contractors before issuing tender",
         });
 
-      // ── Generate a unique bid token for each contractor ──
       tender.status    = "Issued";
       tender.issueDate = new Date();
       tender.shortlistedContractors = tender.shortlistedContractors.map(
@@ -452,9 +466,7 @@ router.post(
       );
       await tender.save();
 
-      const project = await Project.findById(tender.projectId).select(
-        "projectName",
-      );
+      const project = await Project.findById(tender.projectId).select("projectName");
       const projectName = (project as any)?.projectName || "Your Project";
 
       const emailResults = await Promise.allSettled(
@@ -524,9 +536,7 @@ router.delete(
           .status(400)
           .json({ message: "Only draft tenders can be deleted" });
 
-      // ── Delete all tender documents from R2 ─────────────────
       await deleteDocumentsFromR2((tender as any).documents || []);
-      // ────────────────────────────────────────────────────────
 
       await TenderBid.deleteMany({ tenderId });
       await TenderRFI.deleteMany({ tenderId });
@@ -570,8 +580,7 @@ router.get(
   },
 );
 
-// GET single bid by ID — used by BidDetailModal
-// ⚠️ Must be defined BEFORE GET /tenders/:tenderId to prevent route shadowing
+// GET single bid by ID
 router.get(
   "/tenders/:tenderId/bids/:bidId",
   authMiddleware,
@@ -677,7 +686,7 @@ router.post(
   },
 );
 
-// SUBMIT bid — notifies admin
+// SUBMIT bid
 router.post(
   "/tenders/:tenderId/bids/:bidId/submit",
   authMiddleware,
@@ -711,19 +720,12 @@ router.post(
         await tender.save();
       }
 
-      // ── EMAIL: notify admin that a bid was submitted ──
       if (tender) {
         try {
-          const contractor = await Contractor.findById(
-            bid.contractorId,
-          ).select("companyName");
-          const project = await Project.findById(tender.projectId).select(
-            "userId",
-          );
-          const User  = require("../models/User").default;
-          const admin = await User.findById(
-            (project as any)?.userId,
-          ).select("email");
+          const contractor = await Contractor.findById(bid.contractorId).select("companyName");
+          const project    = await Project.findById(tender.projectId).select("userId");
+          const User       = require("../models/User").default;
+          const admin      = await User.findById((project as any)?.userId).select("email");
 
           if (admin?.email) {
             await sendBidReceivedNotification({
@@ -737,10 +739,7 @@ router.post(
               submittedAt:       bid.submittedAt?.toISOString() ?? new Date().toISOString(),
               reviewUrl:         `${APP_URL}/admin/projects/${tender.projectId}/tender/${tenderId}`,
             }).catch((err) =>
-              console.error(
-                "[Email] Bid received notification failed:",
-                err?.message,
-              ),
+              console.error("[Email] Bid received notification failed:", err?.message),
             );
           }
         } catch {
@@ -795,7 +794,7 @@ router.put(
   },
 );
 
-// AWARD tender — emails winner + rejects everyone else
+// AWARD tender — emails winner + rejects everyone else + syncs BudgetItem
 router.post(
   "/tenders/:tenderId/award",
   authMiddleware,
@@ -825,8 +824,10 @@ router.post(
       if (!winningBid)
         return res.status(404).json({ message: "Bid not found" });
 
+      // ── Mark tender as awarded ──────────────────────────────
       tender.status              = "Awarded";
       tender.awardedContractorId = winningBid.contractorId;
+      tender.awardedBidId        = winningBid._id as any;
       tender.awardedAmount       = winningBid.bidAmount;
       tender.awardedReason       = awardedReason;
       tender.awardDate           = new Date();
@@ -835,6 +836,7 @@ router.post(
       winningBid.status = "Accepted";
       await winningBid.save();
 
+      // ── Reject all other bids ───────────────────────────────
       const losingBids = await TenderBid.find({
         tenderId,
         _id: { $ne: bidId },
@@ -843,6 +845,45 @@ router.post(
         { tenderId, _id: { $ne: bidId } },
         { status: "Rejected" },
       );
+
+      // ── Sync awarded amount → BudgetItem ────────────────────
+      try {
+        const budgetPayload = {
+          projectId:       tender.projectId,
+          description:     `${tender.title} (${(tender as any).tenderNumber})`,
+          vendor:          winningBid.contractorName || "",
+          quantity:        1,
+          unitCost:        winningBid.bidAmount,
+          totalCost:       winningBid.bidAmount,
+          committedStatus: "Committed",
+          category:        mapTenderCategoryToBudget(tender.category),
+          tenderId:        tender._id,
+          tenderNumber:    (tender as any).tenderNumber,
+          awardedBidId:    winningBid._id,
+          isTenderSynced:  true,
+          createdBy:       req.user!.id,
+        };
+
+        // Upsert: update existing BudgetItem for this tender, or create one.
+        const budgetItem = await BudgetItem.findOneAndUpdate(
+          { tenderId: tender._id },
+          { $set: budgetPayload },
+          { new: true, upsert: true, setDefaultsOnInsert: true },
+        );
+
+        // Write the link back onto the tender so the UI can cross-reference.
+        await Tender.findByIdAndUpdate(tenderId, {
+          budgetSynced: true,
+          budgetItemId: budgetItem._id,
+        });
+
+        // Keep project.spent accurate.
+        await recalculateProjectSpent(tender.projectId);
+      } catch (budgetErr: any) {
+        // Non-fatal — budget sync failure must not roll back the award.
+        console.error("[Award] Budget sync failed:", budgetErr?.message);
+      }
+      // ────────────────────────────────────────────────────────
 
       const project     = await Project.findById(tender.projectId).select("projectName");
       const projectName = (project as any)?.projectName || "Your Project";
@@ -960,7 +1001,7 @@ router.post(
   },
 );
 
-// ANSWER RFI — emails contractor
+// ANSWER RFI
 router.put(
   "/rfis/:rfiId/answer",
   authMiddleware,
@@ -994,7 +1035,6 @@ router.put(
       rfi.answeredBy = req.user!.id;
       await rfi.save();
 
-      // ── EMAIL: notify contractor their RFI has been answered ──
       if ((rfi as any).contractorEmail) {
         const tender = await Tender.findById((rfi as any).tenderId).select(
           "title tenderNumber",
@@ -1190,9 +1230,7 @@ router.post(
 );
 
 // ==================== GET SINGLE TENDER ====================
-// ⚠️ MUST remain at the bottom — registering this earlier causes Express
-// to match /tenders/:tenderId before reaching more-specific sub-routes
-// like /tenders/:tenderId/bids/:bidId, resulting in 404s.
+// ⚠️ Must remain at the bottom to avoid shadowing sub-routes.
 
 router.get(
   "/tenders/:tenderId",
