@@ -1,621 +1,533 @@
 import express from "express";
+import mongoose from "mongoose";
 import { authMiddleware } from "../middleware/auth";
+import Brand from "../models/Brand";
+import Project from "../models/Projects";
+import TeamMember from "../models/TeamMember";
 import Thread from "../models/Thread";
 import ThreadComment from "../models/ThreadComment";
-import Brand from "../models/Brand";
-import TeamMember from "../models/TeamMember";
-import Project from "../models/Projects";
-import {
-  addThreadClient,
-  removeThreadClient,
-  sendThreadEvent,
-  sendThreadHeartbeat,
-} from "../services/threadRealtimeService";
+import ThreadReaction, {
+  REACTION_TYPES,
+  ReactionType,
+} from "../models/ThreadReaction";
 
 const router = express.Router();
 
-// Helper: Check if user can access thread
-const canAccessThread = async (userId: string, thread: any) => {
-  // If thread has no projectId, check if user is brand team member
-  if (!thread.projectId) {
-    const brand = await Brand.findById(thread.brandId);
-    if (!brand) return false;
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-    const isBrandMember = brand.teamMembers?.some(
-      (member: any) =>
-        member.email === thread.createdByEmail || member._id === userId,
-    );
+function buildReactionSummary(
+  reactions: Array<{ reaction: string; authorName: string }>
+) {
+  const summary: Record<string, { count: number; users: string[] }> = {};
+  for (const r of reactions) {
+    if (!summary[r.reaction]) summary[r.reaction] = { count: 0, users: [] };
+    summary[r.reaction].count++;
+    summary[r.reaction].users.push(r.authorName);
+  }
+  return summary;
+}
 
-    return isBrandMember || thread.createdBy.toString() === userId;
+async function checkBrandAccess(
+  user: Express.Request["user"],
+  brandId: string
+) {
+  if (!user) return null;
+  if (!mongoose.Types.ObjectId.isValid(brandId)) return null;
+
+  const brand = await Brand.findById(brandId);
+  if (!brand || !brand.isActive) return null;
+
+  if (user.role === "admin") {
+    if (brand.createdBy.toString() !== user.id.toString()) return null;
+    return brand;
   }
 
-  // If thread has projectId, check if user is project team member
-  const isTeamMember = await TeamMember.findOne({
-    projectId: thread.projectId,
-    userId: userId,
+  const project = await Project.findOne({ brand: brand.name });
+  if (!project) return null;
+
+  const membership = await TeamMember.findOne({
+    userId: user.id,
+    projectId: project._id,
     status: "active",
   });
 
-  return !!isTeamMember || thread.createdBy.toString() === userId;
-};
+  return membership ? brand : null;
+}
 
-// CREATE thread
-router.post(
-  "/brands/:brandId/threads",
+// ─── GET /api/threads?brandId=xxx&page=1&limit=20 ────────────────────────────
+
+router.get(
+  "/",
   authMiddleware,
   async (req: express.Request, res: express.Response) => {
     try {
-      const { brandId } = req.params;
-      const { title, content, projectId, attachments } = req.body;
+      const { brandId } = req.query as { brandId?: string };
 
-      console.log("CREATE THREAD REQUEST:", {
-        brandId,
-        userId: req.user!.id,
-        hasTitle: !!title,
-        hasContent: !!content,
-        projectId,
-        attachmentsCount: attachments?.length || 0,
+      if (!brandId) {
+        return res.status(400).json({ message: "brandId is required" });
+      }
+
+      const brand = await checkBrandAccess(req.user!, brandId);
+      if (!brand) {
+        return res.status(403).json({ message: "Access denied to this brand" });
+      }
+
+      const page = Math.max(1, parseInt(req.query.page as string) || 1);
+      const limit = Math.min(
+        50,
+        Math.max(1, parseInt(req.query.limit as string) || 20)
+      );
+      const skip = (page - 1) * limit;
+
+      const filter = { brandId, deletedAt: null };
+
+      const [posts, total] = await Promise.all([
+        Thread.find(filter)
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .lean(),
+        Thread.countDocuments(filter),
+      ]);
+
+      const postIds = posts.map((p) => p._id);
+
+      const [commentCounts, allReactions] = await Promise.all([
+        ThreadComment.aggregate([
+          { $match: { threadId: { $in: postIds }, deletedAt: null } },
+          { $group: { _id: "$threadId", count: { $sum: 1 } } },
+        ]),
+        ThreadReaction.find({
+          targetType: "post",
+          targetId: { $in: postIds },
+        }).lean(),
+      ]);
+
+      const commentCountMap: Record<string, number> = {};
+      for (const c of commentCounts) {
+        commentCountMap[c._id.toString()] = c.count;
+      }
+
+      const reactionsByPost: Record<
+        string,
+        Array<{ reaction: string; authorName: string; userId: string }>
+      > = {};
+      for (const r of allReactions) {
+        const key = r.targetId.toString();
+        if (!reactionsByPost[key]) reactionsByPost[key] = [];
+        reactionsByPost[key].push({
+          reaction: r.reaction,
+          authorName: r.authorName,
+          userId: r.userId.toString(),
+        });
+      }
+
+      const enrichedPosts = posts.map((post) => {
+        const postId = post._id.toString();
+        const reactions = reactionsByPost[postId] || [];
+        return {
+          ...post,
+          commentCount: commentCountMap[postId] || 0,
+          reactionSummary: buildReactionSummary(reactions),
+          myReaction:
+            reactions.find((r) => r.userId === req.user!.id.toString())
+              ?.reaction ?? null,
+        };
       });
 
-      if (!title || !content) {
+      res.json({
+        posts: enrichedPosts,
+        total,
+        page,
+        limit,
+        hasMore: skip + posts.length < total,
+      });
+    } catch (err) {
+      console.error("Threads: get posts error:", err);
+      res.status(500).json({ message: "Failed to fetch threads" });
+    }
+  }
+);
+
+// ─── POST /api/threads ────────────────────────────────────────────────────────
+
+router.post(
+  "/",
+  authMiddleware,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { brandId, content } = req.body;
+
+      if (!brandId) {
+        return res.status(400).json({ message: "brandId is required" });
+      }
+      if (!content || !content.trim()) {
+        return res.status(400).json({ message: "Content cannot be empty" });
+      }
+      if (content.trim().length > 5000) {
         return res
           .status(400)
-          .json({ message: "Title and content are required" });
+          .json({ message: "Content cannot exceed 5000 characters" });
       }
 
-      // Verify brand exists
-      const brand = await Brand.findById(brandId);
+      const brand = await checkBrandAccess(req.user!, brandId);
       if (!brand) {
-        console.log("Brand not found:", brandId);
-        return res.status(404).json({ message: "Brand not found" });
+        return res.status(403).json({ message: "Access denied to this brand" });
       }
 
-      if (
-        req.user!.role === "admin" &&
-        String(brand.createdBy) !== String(req.user!.id)
-      ) {
-        return res
-          .status(403)
-          .json({ message: "Not authorized for this brand" });
-      }
+      const adminId =
+        req.user!.role === "admin"
+          ? req.user!.id
+          : (brand.createdBy as mongoose.Types.ObjectId).toString();
 
-      console.log("Brand found:", brand.name);
-
-      // If projectId specified, verify user is team member
-      if (projectId) {
-        const isTeamMember = await TeamMember.findOne({
-          projectId,
-          userId: req.user!.id,
-          status: "active",
-        });
-
-        if (!isTeamMember) {
-          console.log("User not a team member of project:", projectId);
-          return res
-            .status(403)
-            .json({ message: "You are not a member of this project" });
-        }
-        console.log("User is team member of project");
-      }
-
-      const newThread = await Thread.create({
-        title,
-        content,
+      const post = await Thread.create({
         brandId,
-        projectId: projectId || undefined,
-        createdBy: req.user!.id,
-        createdByName: req.user!.name,
-        createdByEmail: req.user!.email,
-        attachments: attachments || [],
+        brandName: brand.name,
+        adminId,
+        userId: req.user!.id,
+        // ✅ FIX: fallback to email if name is missing in the user record
+        authorName: req.user!.name || req.user!.email,
+        authorEmail: req.user!.email,
+        authorRole: req.user!.role,
+        content: content.trim(),
       });
-
-      console.log("Thread created successfully:", newThread._id);
 
       res.status(201).json({
-        message: "Thread created successfully",
-        thread: newThread,
+        message: "Post created successfully",
+        post: {
+          ...post.toObject(),
+          commentCount: 0,
+          reactionSummary: {},
+          myReaction: null,
+        },
       });
-    } catch (error) {
-      console.error("Create thread error:", error);
-      res.status(500).json({
-        message: "Failed to create thread",
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
+    } catch (err) {
+      console.error("Threads: create post error:", err);
+      res.status(500).json({ message: "Failed to create post" });
     }
-  },
+  }
 );
 
-// GET all threads for a brand (with filtering)
-router.get(
-  "/brands/:brandId/threads",
+// ─── POST /api/threads/reactions/toggle ──────────────────────────────────────
+// NOTE: Must be declared BEFORE /:id routes to avoid param collision
+
+router.post(
+  "/reactions/toggle",
   authMiddleware,
   async (req: express.Request, res: express.Response) => {
     try {
-      const { brandId } = req.params;
-      const { projectId } = req.query;
+      const { targetType, targetId, reaction, brandId } = req.body;
 
-      console.log("GET THREADS REQUEST:", {
-        brandId,
-        projectId,
-        userId: req.user!.id,
-      });
-
-      // Verify brand exists
-      const brand = await Brand.findById(brandId);
-      if (!brand) {
-        console.log("Brand not found:", brandId);
-        return res.status(404).json({ message: "Brand not found" });
-      }
-
-      if (
-        req.user!.role === "admin" &&
-        String(brand.createdBy) !== String(req.user!.id)
-      ) {
+      if (!["post", "comment"].includes(targetType)) {
         return res
-          .status(403)
-          .json({ message: "Not authorized for this brand" });
+          .status(400)
+          .json({ message: 'targetType must be "post" or "comment"' });
+      }
+      if (!mongoose.Types.ObjectId.isValid(targetId)) {
+        return res.status(400).json({ message: "Invalid targetId" });
+      }
+      if (!REACTION_TYPES.includes(reaction as ReactionType)) {
+        return res.status(400).json({
+          message: `reaction must be one of: ${REACTION_TYPES.join(", ")}`,
+        });
       }
 
-      // Build query
-      let query: any = { brandId };
-
-      if (projectId && projectId !== "all") {
-        query.projectId = projectId;
-      }
-
-      // Get all threads
-      let threads = await Thread.find(query)
-        .sort({ isPinned: -1, createdAt: -1 })
-        .lean();
-
-      console.log(`Found ${threads.length} threads for brand`);
-
-      // Filter threads based on user access
-      const accessibleThreads = [];
-      for (const thread of threads) {
-        const hasAccess = await canAccessThread(req.user!.id, thread);
-        if (hasAccess) {
-          accessibleThreads.push(thread);
-        }
-      }
-
-      console.log(`User has access to ${accessibleThreads.length} threads`);
-
-      res.json(accessibleThreads);
-    } catch (error) {
-      console.error("Get threads error:", error);
-      res.status(500).json({
-        message: "Failed to fetch threads",
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
-    }
-  },
-);
-
-// GET single thread with comments
-router.get(
-  "/threads/:threadId",
-  authMiddleware,
-  async (req: express.Request, res: express.Response) => {
-    try {
-      const { threadId } = req.params;
-
-      const thread = await Thread.findById(threadId).lean();
-      if (!thread) {
-        return res.status(404).json({ message: "Thread not found" });
-      }
-
-      // Check access
-      const hasAccess = await canAccessThread(req.user!.id, thread);
-      if (!hasAccess) {
+      const brand = await checkBrandAccess(req.user!, brandId);
+      if (!brand) {
         return res.status(403).json({ message: "Access denied" });
       }
 
-      // Get comments
-      const comments = await ThreadComment.find({ threadId })
+      const adminId =
+        req.user!.role === "admin"
+          ? req.user!.id
+          : (brand.createdBy as mongoose.Types.ObjectId).toString();
+
+      const existing = await ThreadReaction.findOne({
+        targetId,
+        userId: req.user!.id,
+      });
+
+      let action: "added" | "removed" | "switched";
+
+      if (!existing) {
+        await ThreadReaction.create({
+          brandId,
+          adminId,
+          userId: req.user!.id,
+          // ✅ FIX: fallback to email if name is missing
+          authorName: req.user!.name || req.user!.email,
+          targetType,
+          targetId,
+          reaction,
+        });
+        action = "added";
+      } else if (existing.reaction === reaction) {
+        await existing.deleteOne();
+        action = "removed";
+      } else {
+        existing.reaction = reaction as ReactionType;
+        await existing.save();
+        action = "switched";
+      }
+
+      const allReactions = await ThreadReaction.find({ targetId }).lean();
+      const summary = buildReactionSummary(allReactions);
+      const myReaction =
+        allReactions.find(
+          (r) => r.userId.toString() === req.user!.id.toString()
+        )?.reaction ?? null;
+
+      res.json({ action, targetId, targetType, summary, myReaction });
+    } catch (err) {
+      console.error("Threads: toggle reaction error:", err);
+      res.status(500).json({ message: "Failed to toggle reaction" });
+    }
+  }
+);
+
+// ─── PUT /api/threads/:id ─────────────────────────────────────────────────────
+
+router.put(
+  "/:id",
+  authMiddleware,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { id } = req.params;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(400).json({ message: "Invalid post ID" });
+      }
+
+      const { content } = req.body;
+      if (!content || !content.trim()) {
+        return res.status(400).json({ message: "Content cannot be empty" });
+      }
+      if (content.trim().length > 5000) {
+        return res
+          .status(400)
+          .json({ message: "Content cannot exceed 5000 characters" });
+      }
+
+      const post = await Thread.findOne({ _id: id, deletedAt: null });
+      if (!post) return res.status(404).json({ message: "Post not found" });
+
+      const isOwner = post.userId.toString() === req.user!.id.toString();
+      const isAdmin = req.user!.role === "admin";
+      if (!isOwner && !isAdmin) {
+        return res
+          .status(403)
+          .json({ message: "You can only edit your own posts" });
+      }
+
+      post.content = content.trim();
+      post.isEdited = true;
+      await post.save();
+
+      res.json({ message: "Post updated successfully", post });
+    } catch (err) {
+      console.error("Threads: update post error:", err);
+      res.status(500).json({ message: "Failed to update post" });
+    }
+  }
+);
+
+// ─── DELETE /api/threads/:id ──────────────────────────────────────────────────
+
+router.delete(
+  "/:id",
+  authMiddleware,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { id } = req.params;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(400).json({ message: "Invalid post ID" });
+      }
+
+      const post = await Thread.findOne({ _id: id, deletedAt: null });
+      if (!post) return res.status(404).json({ message: "Post not found" });
+
+      const isOwner = post.userId.toString() === req.user!.id.toString();
+      const isAdmin = req.user!.role === "admin";
+      if (!isOwner && !isAdmin) {
+        return res
+          .status(403)
+          .json({ message: "You can only delete your own posts" });
+      }
+
+      post.deletedAt = new Date();
+      await post.save();
+
+      res.json({ message: "Post deleted successfully", postId: id });
+    } catch (err) {
+      console.error("Threads: delete post error:", err);
+      res.status(500).json({ message: "Failed to delete post" });
+    }
+  }
+);
+
+// ─── GET /api/threads/:id/comments ───────────────────────────────────────────
+
+router.get(
+  "/:id/comments",
+  authMiddleware,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { id } = req.params;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(400).json({ message: "Invalid post ID" });
+      }
+
+      const post = await Thread.findOne({ _id: id, deletedAt: null }).lean();
+      if (!post) return res.status(404).json({ message: "Post not found" });
+
+      const brand = await checkBrandAccess(req.user!, post.brandId.toString());
+      if (!brand) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const comments = await ThreadComment.find({
+        threadId: id,
+        deletedAt: null,
+      })
         .sort({ createdAt: 1 })
         .lean();
 
-      res.json({ thread, comments });
-    } catch (error) {
-      console.error("Get thread error:", error);
-      res.status(500).json({ message: "Failed to fetch thread" });
-    }
-  },
-);
+      const commentIds = comments.map((c) => c._id);
+      const commentReactions = await ThreadReaction.find({
+        targetType: "comment",
+        targetId: { $in: commentIds },
+      }).lean();
 
-// GET thread realtime stream
-router.get(
-  "/threads/:threadId/stream",
-  authMiddleware,
-  async (req: express.Request, res: express.Response) => {
-    try {
-      const { threadId } = req.params;
-
-      const thread = await Thread.findById(threadId).lean();
-      if (!thread) {
-        return res.status(404).json({ message: "Thread not found" });
+      const reactionsByComment: Record<
+        string,
+        Array<{ reaction: string; authorName: string; userId: string }>
+      > = {};
+      for (const r of commentReactions) {
+        const key = r.targetId.toString();
+        if (!reactionsByComment[key]) reactionsByComment[key] = [];
+        reactionsByComment[key].push({
+          reaction: r.reaction,
+          authorName: r.authorName,
+          userId: r.userId.toString(),
+        });
       }
 
-      const hasAccess = await canAccessThread(req.user!.id, thread);
-      if (!hasAccess) {
-        return res.status(403).json({ message: "Access denied" });
-      }
-
-      res.setHeader("Content-Type", "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection", "keep-alive");
-
-      addThreadClient(threadId, res);
-
-      sendThreadEvent(threadId, "thread:connected", {
-        type: "connected",
+      const enrichedComments = comments.map((c) => {
+        const cId = c._id.toString();
+        const reactions = reactionsByComment[cId] || [];
+        return {
+          ...c,
+          reactionSummary: buildReactionSummary(reactions),
+          myReaction:
+            reactions.find((r) => r.userId === req.user!.id.toString())
+              ?.reaction ?? null,
+        };
       });
 
-      const heartbeatInterval = setInterval(() => {
-        sendThreadHeartbeat(threadId);
-      }, 25000);
-
-      req.on("close", () => {
-        clearInterval(heartbeatInterval);
-        removeThreadClient(threadId, res);
-      });
-    } catch (error) {
-      console.error("Thread realtime stream error:", error);
-      if (!res.headersSent) {
-        res.status(500).json({ message: "Failed to open thread stream" });
-      }
+      res.json({ comments: enrichedComments, total: enrichedComments.length });
+    } catch (err) {
+      console.error("Threads: get comments error:", err);
+      res.status(500).json({ message: "Failed to fetch comments" });
     }
-  },
+  }
 );
 
-// GET projects for brand (for dropdown)
-router.get(
-  "/brands/:brandId/projects",
-  authMiddleware,
-  async (req: express.Request, res: express.Response) => {
-    try {
-      const { brandId } = req.params;
+// ─── POST /api/threads/:id/comments ──────────────────────────────────────────
 
-      const brand = await Brand.findById(brandId);
-      if (!brand) {
-        return res.status(404).json({ message: "Brand not found" });
-      }
-
-      if (
-        req.user!.role === "admin" &&
-        String(brand.createdBy) !== String(req.user!.id)
-      ) {
-        return res
-          .status(403)
-          .json({ message: "Not authorized for this brand" });
-      }
-
-      // Get projects where user is a team member
-      const teamMemberships = await TeamMember.find({
-        userId: req.user!.id,
-        status: "active",
-      }).populate("projectId", "projectName brand");
-
-      const projects = teamMemberships
-        .filter((tm: any) => tm.projectId && tm.projectId.brand === brand.name)
-        .map((tm: any) => ({
-          _id: tm.projectId._id,
-          projectName: tm.projectId.projectName,
-        }));
-
-      res.json(projects);
-    } catch (error) {
-      console.error("Get brand projects error:", error);
-      res.status(500).json({ message: "Failed to fetch projects" });
-    }
-  },
-);
-
-// UPDATE thread
-router.put(
-  "/threads/:threadId",
-  authMiddleware,
-  async (req: express.Request, res: express.Response) => {
-    try {
-      const { threadId } = req.params;
-      const { title, content, attachments } = req.body;
-
-      const thread = await Thread.findById(threadId);
-      if (!thread) {
-        return res.status(404).json({ message: "Thread not found" });
-      }
-
-      // Check if user is the creator
-      if (thread.createdBy.toString() !== req.user!.id) {
-        return res
-          .status(403)
-          .json({ message: "You can only edit your own threads" });
-      }
-
-      thread.title = title || thread.title;
-      thread.content = content || thread.content;
-      if (attachments) {
-        thread.attachments = attachments;
-      }
-
-      await thread.save();
-
-      res.json({
-        message: "Thread updated successfully",
-        thread,
-      });
-    } catch (error) {
-      console.error("Update thread error:", error);
-      res.status(500).json({ message: "Failed to update thread" });
-    }
-  },
-);
-
-// DELETE thread
-router.delete(
-  "/threads/:threadId",
-  authMiddleware,
-  async (req: express.Request, res: express.Response) => {
-    try {
-      const { threadId } = req.params;
-
-      const thread = await Thread.findById(threadId);
-      if (!thread) {
-        return res.status(404).json({ message: "Thread not found" });
-      }
-
-      // Check if user is the creator
-      if (thread.createdBy.toString() !== req.user!.id) {
-        return res
-          .status(403)
-          .json({ message: "You can only delete your own threads" });
-      }
-
-      // Delete all comments
-      await ThreadComment.deleteMany({ threadId });
-
-      // Delete thread
-      await Thread.findByIdAndDelete(threadId);
-
-      res.json({ message: "Thread deleted successfully" });
-    } catch (error) {
-      console.error("Delete thread error:", error);
-      res.status(500).json({ message: "Failed to delete thread" });
-    }
-  },
-);
-
-// LIKE/UNLIKE thread
 router.post(
-  "/threads/:threadId/like",
+  "/:id/comments",
   authMiddleware,
   async (req: express.Request, res: express.Response) => {
     try {
-      const { threadId } = req.params;
-
-      const thread = await Thread.findById(threadId);
-      if (!thread) {
-        return res.status(404).json({ message: "Thread not found" });
+      const { id } = req.params;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(400).json({ message: "Invalid post ID" });
       }
 
-      const userIdObj = req.user!.id as any;
-      const likeIndex = thread.likes.findIndex(
-        (id) => id.toString() === userIdObj,
-      );
-
-      if (likeIndex > -1) {
-        // Unlike
-        thread.likes.splice(likeIndex, 1);
-      } else {
-        // Like
-        thread.likes.push(userIdObj);
+      const { content } = req.body;
+      if (!content || !content.trim()) {
+        return res.status(400).json({ message: "Comment cannot be empty" });
       }
-
-      await thread.save();
-
-      res.json({
-        message: likeIndex > -1 ? "Thread unliked" : "Thread liked",
-        likes: thread.likes.length,
-        isLiked: likeIndex === -1,
-      });
-    } catch (error) {
-      console.error("Like thread error:", error);
-      res.status(500).json({ message: "Failed to like thread" });
-    }
-  },
-);
-
-// CREATE comment
-router.post(
-  "/threads/:threadId/comments",
-  authMiddleware,
-  async (req: express.Request, res: express.Response) => {
-    try {
-      const { threadId } = req.params;
-      const { content, attachments } = req.body;
-
-      const hasContent = typeof content === "string" && content.trim() !== "";
-      const hasAttachments =
-        Array.isArray(attachments) && attachments.length > 0;
-
-      if (!hasContent && !hasAttachments) {
+      if (content.trim().length > 1000) {
         return res
           .status(400)
-          .json({ message: "Comment content or attachment is required" });
+          .json({ message: "Comment cannot exceed 1000 characters" });
       }
 
-      const thread = await Thread.findById(threadId);
-      if (!thread) {
-        return res.status(404).json({ message: "Thread not found" });
-      }
+      const post = await Thread.findOne({ _id: id, deletedAt: null }).lean();
+      if (!post) return res.status(404).json({ message: "Post not found" });
 
-      // Check access
-      const hasAccess = await canAccessThread(req.user!.id, thread);
-      if (!hasAccess) {
+      const brand = await checkBrandAccess(req.user!, post.brandId.toString());
+      if (!brand) {
         return res.status(403).json({ message: "Access denied" });
       }
 
-      const newComment = await ThreadComment.create({
-        threadId,
-        content: hasContent ? content.trim() : "",
-        createdBy: req.user!.id,
-        createdByName: req.user!.name,
-        createdByEmail: req.user!.email,
-        attachments: attachments || [],
-      });
+      const adminId =
+        req.user!.role === "admin"
+          ? req.user!.id
+          : (brand.createdBy as mongoose.Types.ObjectId).toString();
 
-      // Update comment count
-      thread.commentCount = (thread.commentCount || 0) + 1;
-      await thread.save();
-
-      sendThreadEvent(threadId, "thread:comment:new", {
-        type: "comment:new",
-        comment: newComment,
+      const comment = await ThreadComment.create({
+        threadId: id,
+        brandId: post.brandId,
+        adminId,
+        userId: req.user!.id,
+        // ✅ FIX: fallback to email if name is missing
+        authorName: req.user!.name || req.user!.email,
+        authorEmail: req.user!.email,
+        authorRole: req.user!.role,
+        content: content.trim(),
       });
 
       res.status(201).json({
-        message: "Comment added successfully",
-        comment: newComment,
+        message: "Comment added",
+        comment: {
+          ...comment.toObject(),
+          reactionSummary: {},
+          myReaction: null,
+        },
       });
-    } catch (error) {
-      console.error("Create comment error:", error);
+    } catch (err) {
+      console.error("Threads: add comment error:", err);
       res.status(500).json({ message: "Failed to add comment" });
     }
-  },
+  }
 );
 
-// UPDATE comment
-router.put(
-  "/comments/:commentId",
-  authMiddleware,
-  async (req: express.Request, res: express.Response) => {
-    try {
-      const { commentId } = req.params;
-      const { content, attachments } = req.body;
+// ─── DELETE /api/threads/:postId/comments/:commentId ─────────────────────────
 
-      const comment = await ThreadComment.findById(commentId);
-      if (!comment) {
-        return res.status(404).json({ message: "Comment not found" });
-      }
-
-      // Check if user is the creator
-      if (comment.createdBy.toString() !== req.user!.id) {
-        return res
-          .status(403)
-          .json({ message: "You can only edit your own comments" });
-      }
-
-      comment.content = content || comment.content;
-      if (attachments) {
-        comment.attachments = attachments;
-      }
-
-      await comment.save();
-
-      sendThreadEvent(comment.threadId.toString(), "thread:comment:updated", {
-        type: "comment:updated",
-        comment,
-      });
-
-      res.json({
-        message: "Comment updated successfully",
-        comment,
-      });
-    } catch (error) {
-      console.error("Update comment error:", error);
-      res.status(500).json({ message: "Failed to update comment" });
-    }
-  },
-);
-
-// DELETE comment
 router.delete(
-  "/comments/:commentId",
+  "/:postId/comments/:commentId",
   authMiddleware,
   async (req: express.Request, res: express.Response) => {
     try {
-      const { commentId } = req.params;
+      const { postId, commentId } = req.params;
 
-      const comment = await ThreadComment.findById(commentId);
+      const comment = await ThreadComment.findOne({
+        _id: commentId,
+        threadId: postId,
+        deletedAt: null,
+      });
       if (!comment) {
         return res.status(404).json({ message: "Comment not found" });
       }
 
-      // Check if user is the creator
-      if (comment.createdBy.toString() !== req.user!.id) {
+      const isOwner = comment.userId.toString() === req.user!.id.toString();
+      const isAdmin = req.user!.role === "admin";
+      if (!isOwner && !isAdmin) {
         return res
           .status(403)
           .json({ message: "You can only delete your own comments" });
       }
 
-      // Update thread comment count
-      await Thread.findByIdAndUpdate(comment.threadId, {
-        $inc: { commentCount: -1 },
-      });
-
-      const threadId = comment.threadId.toString();
-
-      // Delete comment
-      await ThreadComment.findByIdAndDelete(commentId);
-
-      sendThreadEvent(threadId, "thread:comment:deleted", {
-        type: "comment:deleted",
-        commentId,
-      });
-
-      res.json({ message: "Comment deleted successfully" });
-    } catch (error) {
-      console.error("Delete comment error:", error);
-      res.status(500).json({ message: "Failed to delete comment" });
-    }
-  },
-);
-
-// LIKE/UNLIKE comment
-router.post(
-  "/comments/:commentId/like",
-  authMiddleware,
-  async (req: express.Request, res: express.Response) => {
-    try {
-      const { commentId } = req.params;
-
-      const comment = await ThreadComment.findById(commentId);
-      if (!comment) {
-        return res.status(404).json({ message: "Comment not found" });
-      }
-
-      const userIdObj = req.user!.id as any;
-      const likeIndex = comment.likes.findIndex(
-        (id) => id.toString() === userIdObj,
-      );
-
-      if (likeIndex > -1) {
-        // Unlike
-        comment.likes.splice(likeIndex, 1);
-      } else {
-        // Like
-        comment.likes.push(userIdObj);
-      }
-
+      comment.deletedAt = new Date();
       await comment.save();
 
-      sendThreadEvent(comment.threadId.toString(), "thread:comment:liked", {
-        type: "comment:liked",
-        commentId: comment._id,
-        likes: comment.likes,
-      });
-
-      res.json({
-        message: likeIndex > -1 ? "Comment unliked" : "Comment liked",
-        likes: comment.likes.length,
-        isLiked: likeIndex === -1,
-      });
-    } catch (error) {
-      console.error("Like comment error:", error);
-      res.status(500).json({ message: "Failed to like comment" });
+      res.json({ message: "Comment deleted", commentId });
+    } catch (err) {
+      console.error("Threads: delete comment error:", err);
+      res.status(500).json({ message: "Failed to delete comment" });
     }
-  },
+  }
 );
 
 export default router;

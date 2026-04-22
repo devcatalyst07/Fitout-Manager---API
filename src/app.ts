@@ -18,7 +18,6 @@ import projectRoutes from "./routes/project.routes";
 import documentRoutes from "./routes/document.routes";
 import financeRoutes from "./routes/finance.routes";
 import reportsRoutes from "./routes/reports.routes";
-import threadRoutes from "./routes/thread.routes";
 import taskRoutes from "./routes/task.routes";
 import budgetRoutes from "./routes/budget.routes";
 import teamRoutes from "./routes/team.routes";
@@ -41,6 +40,7 @@ import contractorRoutes from "./routes/contractor.routes";
 import publicRoutes from "./routes/public.routes";
 import paymentRoutes, { stripeWebhookHandler } from "./routes/payment.routes";
 import messageRoutes from "./routes/message.routes";
+import threadRoutes from "./routes/thread.routes";
 
 const app = express();
 
@@ -143,7 +143,6 @@ app.use("/api/auth", authRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/admin", dashboardRoutes);
 app.use("/api/brands", brandRoutes);
-app.use("/api", threadRoutes);
 app.use("/api/scopes", scopeRoutes);
 app.use("/api/roles", roleRoutes);
 app.use("/api/projects", projectRoutes);
@@ -168,6 +167,7 @@ app.use("/api/contractors", contractorRoutes);
 app.use("/api/public", publicRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/messages", messageRoutes);
+app.use("/api/threads", threadRoutes);
 
 // 404 Handler
 app.use((req, res) => {

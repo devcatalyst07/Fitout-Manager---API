@@ -1,92 +1,95 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import mongoose, { Schema, Document, Model } from "mongoose";
+
+// ─── Interface ──────────────────────────────────────────────────────────────
+// A Thread post is scoped to a single brand. Only users associated with that
+// brand (via project team membership) can see or interact with it.
+// Author fields are denormalised at creation time so posts stay readable even
+// if the user's profile changes later.
 
 export interface IThread extends Document {
-  title: string;
-  content: string;
-  brandId: mongoose.Types.ObjectId;
-  projectId?: mongoose.Types.ObjectId;
-  createdBy: mongoose.Types.ObjectId;
-  createdByName: string;
-  createdByEmail: string;
-  attachments: Array<{
-    fileName: string;
-    fileUrl: string;
-    fileType: string;
-    fileSize: number;
-    uploadedAt: Date;
-  }>;
-  likes: mongoose.Types.ObjectId[];
-  commentCount: number;
-  isPinned: boolean;
+  brandId: mongoose.Types.ObjectId;    // Brand this post belongs to (primary scope key)
+  brandName: string;                   // Denormalised brand name for display
+  adminId: mongoose.Types.ObjectId;    // The admin who owns / created the brand
+  userId: mongoose.Types.ObjectId;     // Author (User._id)
+  authorName: string;                  // Snapshot of author's display name
+  authorEmail: string;                 // Snapshot of author's email
+  authorRole: "admin" | "user";        // Snapshot of author's role
+  content: string;                     // Post body (max 5 000 chars)
+  isEdited: boolean;                   // True once the post has been edited
+  deletedAt: Date | null;              // Soft-delete timestamp (null = live)
   createdAt: Date;
   updatedAt: Date;
 }
 
-const ThreadSchema: Schema = new Schema(
+export interface IThreadModel extends Model<IThread> {}
+
+// ─── Schema ──────────────────────────────────────────────────────────────────
+
+const ThreadSchema = new Schema<IThread>(
   {
-    title: {
+    brandId: {
+      type: Schema.Types.ObjectId,
+      ref: "Brand",
+      required: true,
+      index: true,
+    },
+    brandName: {
       type: String,
       required: true,
       trim: true,
     },
+    adminId: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
+    userId: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    authorName: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    authorEmail: {
+      type: String,
+      required: true,
+      trim: true,
+      lowercase: true,
+    },
+    authorRole: {
+      type: String,
+      enum: ["admin", "user"],
+      default: "user",
+    },
     content: {
       type: String,
       required: true,
+      trim: true,
+      maxlength: [5000, "Post content cannot exceed 5000 characters"],
     },
-    brandId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Brand',
-      required: true,
-    },
-    projectId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Project',
-    },
-    createdBy: {
-      type: Schema.Types.ObjectId,
-      ref: 'User',
-      required: true,
-    },
-    createdByName: {
-      type: String,
-      required: true,
-    },
-    createdByEmail: {
-      type: String,
-      required: true,
-    },
-    attachments: [
-      {
-        fileName: String,
-        fileUrl: String,
-        fileType: String,
-        fileSize: Number,
-        uploadedAt: { type: Date, default: Date.now },
-      },
-    ],
-    likes: [
-      {
-        type: Schema.Types.ObjectId,
-        ref: 'User',
-      },
-    ],
-    commentCount: {
-      type: Number,
-      default: 0,
-    },
-    isPinned: {
+    isEdited: {
       type: Boolean,
       default: false,
     },
+    deletedAt: {
+      type: Date,
+      default: null,
+    },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
-// Index for efficient queries
+// ─── Indexes ─────────────────────────────────────────────────────────────────
+// Primary query: all live posts for a brand, newest first
 ThreadSchema.index({ brandId: 1, createdAt: -1 });
-ThreadSchema.index({ projectId: 1, createdAt: -1 });
-ThreadSchema.index({ createdBy: 1 });
+// Secondary: all posts by a given admin (used in admin-level queries)
+ThreadSchema.index({ adminId: 1, brandId: 1, createdAt: -1 });
+// Speeds up soft-delete filtering on large collections
+ThreadSchema.index({ deletedAt: 1 });
 
-export default mongoose.model<IThread>('Thread', ThreadSchema);
+const Thread = mongoose.model<IThread, IThreadModel>("Thread", ThreadSchema);
+export default Thread;
