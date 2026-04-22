@@ -9,6 +9,7 @@ import TenderRFI from "../models/TenderRFI";
 import Contractor from "../models/Contractor";
 import Project from "../models/Projects";
 import TeamMember from "../models/TeamMember";
+import { uploadToR2, deleteFromR2 } from "../utils/r2Storage";
 import {
   sendTenderInvitation,
   sendTenderUpdateNotification,
@@ -60,6 +61,56 @@ const canAccessTender = async (
   return canAccessProject(user, String((tender as any).projectId));
 };
 
+// ── R2 upload helper (mirrors document.routes.ts pattern) ───────
+
+const uploadDocuments = async (
+  fieldFiles: Express.Multer.File[] | undefined,
+  section: string,
+  folder: string,
+): Promise<any[]> => {
+  if (!fieldFiles || fieldFiles.length === 0) return [];
+
+  const uploaded = await Promise.allSettled(
+    fieldFiles.map((f) => uploadToR2(f, folder)),
+  );
+
+  return uploaded
+    .map((result, i) => {
+      if (result.status === "fulfilled") {
+        return {
+          fileName:           fieldFiles[i].originalname,
+          fileType:           fieldFiles[i].mimetype,
+          fileSize:           fieldFiles[i].size,
+          fileUrl:            result.value.fileUrl,
+          cloudinaryPublicId: result.value.key, // reuse field to store R2 key
+          section,
+          uploadedAt:         new Date(),
+        };
+      } else {
+        console.error(
+          `[R2] Failed to upload ${fieldFiles[i].originalname}:`,
+          result.reason,
+        );
+        return null;
+      }
+    })
+    .filter(Boolean);
+};
+
+// ── R2 delete helper for removed documents ──────────────────────
+
+const deleteDocumentsFromR2 = async (docs: any[]): Promise<void> => {
+  await Promise.allSettled(
+    docs
+      .filter((d: any) => d.cloudinaryPublicId)
+      .map((d: any) =>
+        deleteFromR2(d.cloudinaryPublicId).catch((err) =>
+          console.warn("[R2] Delete warning:", err),
+        ),
+      ),
+  );
+};
+
 // ==================== TENDER ROUTES ====================
 
 // GET all tenders for a project
@@ -69,18 +120,24 @@ router.get(
   async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;
+
+      if (!isValidObjectId(projectId))
+        return res.status(400).json({ message: "Invalid project ID" });
+
       const hasAccess = await canAccessProject(req.user, projectId);
       if (!hasAccess)
-        return res.status(403).json({ message: "Not authorized to access this project" });
+        return res
+          .status(403)
+          .json({ message: "Not authorized to access this project" });
 
       const tenders = await Tender.find({ projectId })
         .populate("createdBy", "name email")
         .sort({ createdAt: -1 });
 
       res.json(tenders);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Get tenders error:", error);
-      res.status(500).json({ message: "Failed to fetch tenders" });
+      res.status(500).json({ message: "Failed to fetch tenders", detail: error?.message });
     }
   },
 );
@@ -94,59 +151,97 @@ router.post(
   async (req: express.Request, res: express.Response) => {
     try {
       const { projectId } = req.params;
+
+      if (!isValidObjectId(projectId))
+        return res.status(400).json({ message: "Invalid project ID" });
+
       const hasAccess = await canAccessProject(req.user, projectId);
       if (!hasAccess)
-        return res.status(403).json({ message: "Not authorized to access this project" });
+        return res
+          .status(403)
+          .json({ message: "Not authorized to access this project" });
 
       const {
-        title, description, category, budgetedAmount,
-        submissionDeadline, scopeOfWorks, specifications,
-        complianceRequirements, shortlistedContractors,
+        title,
+        description,
+        category,
+        budgetedAmount,
+        submissionDeadline,
+        scopeOfWorks,
+        specifications,
+        complianceRequirements,
+        shortlistedContractors,
       } = req.body;
 
       const parsedBudget = parseFloat(budgetedAmount);
       if (!title || isNaN(parsedBudget) || parsedBudget <= 0)
-        return res.status(400).json({ message: "Title and a valid budgeted amount (> 0) are required" });
+        return res.status(400).json({
+          message:
+            "Title and a valid budgeted amount (> 0) are required",
+        });
 
       let parsedCompliance: string[] = [];
       let parsedContractors: any[] = [];
       try {
-        parsedCompliance  = complianceRequirements ? JSON.parse(complianceRequirements) : [];
-        parsedContractors = shortlistedContractors ? JSON.parse(shortlistedContractors) : [];
+        parsedCompliance = complianceRequirements
+          ? JSON.parse(complianceRequirements)
+          : [];
+        parsedContractors = shortlistedContractors
+          ? JSON.parse(shortlistedContractors)
+          : [];
       } catch {
-        return res.status(400).json({ message: "Invalid JSON in complianceRequirements or shortlistedContractors" });
+        return res.status(400).json({
+          message:
+            "Invalid JSON in complianceRequirements or shortlistedContractors",
+        });
       }
 
-      const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
-      const buildDocuments = (fieldFiles: Express.Multer.File[] | undefined, section: string) =>
-        (fieldFiles || []).map((f) => ({
-          fileName: f.originalname, fileType: f.mimetype,
-          fileSize: f.size, fileUrl: "", section, uploadedAt: new Date(),
-        }));
+      // ── Upload files to R2 ──────────────────────────────────
+      const files =
+        req.files as
+          | { [fieldname: string]: Express.Multer.File[] }
+          | undefined;
+      const folder = `tenders/${projectId}`;
 
-      const allDocs = [
-        ...buildDocuments(files?.["scope_files"],   "scope"),
-        ...buildDocuments(files?.["spec_files"],     "specifications"),
-        ...buildDocuments(files?.["general_files"],  "general"),
-      ];
+      const [scopeDocs, specDocs, generalDocs] = await Promise.all([
+        uploadDocuments(files?.["scope_files"],   "scope",          folder),
+        uploadDocuments(files?.["spec_files"],     "specifications", folder),
+        uploadDocuments(files?.["general_files"],  "general",        folder),
+      ]);
+      const allDocs = [...scopeDocs, ...specDocs, ...generalDocs];
+      // ────────────────────────────────────────────────────────
 
       const newTender = await Tender.create({
-        projectId, title, description,
-        category: category || "Construction",
-        budgetedAmount: parsedBudget,
-        submissionDeadline: submissionDeadline || undefined,
-        scopeOfWorks, specifications,
+        projectId,
+        title,
+        description,
+        category:               category || "Construction",
+        budgetedAmount:         parsedBudget,
+        submissionDeadline:     submissionDeadline || undefined,
+        scopeOfWorks,
+        specifications,
         complianceRequirements: parsedCompliance,
         shortlistedContractors: parsedContractors,
-        documents: allDocs,
-        createdBy: req.user!.id,
+        documents:              allDocs,
+        createdBy:              req.user!.id,
       });
 
-      const populatedTender = await Tender.findById(newTender._id).populate("createdBy", "name email");
-      res.status(201).json({ message: "Tender created successfully", tender: populatedTender });
-    } catch (error) {
-      console.error("Create tender error:", error);
-      res.status(500).json({ message: "Failed to create tender" });
+      const populatedTender = await Tender.findById(newTender._id).populate(
+        "createdBy",
+        "name email",
+      );
+
+      res.status(201).json({
+        message: "Tender created successfully",
+        tender:  populatedTender,
+      });
+    } catch (error: any) {
+      console.error("Create tender error:", error?.message || error);
+      if (error?.code === 11000)
+        return res
+          .status(409)
+          .json({ message: "Duplicate tender number, please try again" });
+      res.status(500).json({ message: "Failed to create tender", detail: error?.message });
     }
   },
 );
@@ -160,35 +255,61 @@ router.put(
   async (req: express.Request, res: express.Response) => {
     try {
       const { tenderId } = req.params;
+
+      if (!isValidObjectId(tenderId))
+        return res.status(400).json({ message: "Invalid tender ID" });
+
       const hasAccess = await canAccessTender(req.user, tenderId);
       if (!hasAccess)
-        return res.status(403).json({ message: "Not authorized to access this tender" });
+        return res
+          .status(403)
+          .json({ message: "Not authorized to access this tender" });
 
       const tender = await Tender.findById(tenderId);
-      if (!tender) return res.status(404).json({ message: "Tender not found" });
+      if (!tender)
+        return res.status(404).json({ message: "Tender not found" });
       if (tender.status === "Awarded")
-        return res.status(400).json({ message: "Cannot edit awarded tender" });
+        return res
+          .status(400)
+          .json({ message: "Cannot edit awarded tender" });
 
       const {
-        title, description, category, budgetedAmount,
-        submissionDeadline, scopeOfWorks, specifications,
-        complianceRequirements, shortlistedContractors,
-        removedDocumentIds, changeDescription,
+        title,
+        description,
+        category,
+        budgetedAmount,
+        submissionDeadline,
+        scopeOfWorks,
+        specifications,
+        complianceRequirements,
+        shortlistedContractors,
+        removedDocumentIds,
+        changeDescription,
       } = req.body;
 
       const parsedBudget = parseFloat(budgetedAmount);
       if (!title || isNaN(parsedBudget) || parsedBudget <= 0)
-        return res.status(400).json({ message: "Title and a valid budgeted amount (> 0) are required" });
+        return res.status(400).json({
+          message: "Title and a valid budgeted amount (> 0) are required",
+        });
 
       let parsedCompliance: string[] = [];
       let parsedContractors: any[] = [];
       let parsedRemovedIds: string[] = [];
       try {
-        parsedCompliance  = complianceRequirements ? JSON.parse(complianceRequirements) : [];
-        parsedContractors = shortlistedContractors ? JSON.parse(shortlistedContractors) : [];
-        parsedRemovedIds  = removedDocumentIds     ? JSON.parse(removedDocumentIds)     : [];
+        parsedCompliance  = complianceRequirements
+          ? JSON.parse(complianceRequirements)
+          : [];
+        parsedContractors = shortlistedContractors
+          ? JSON.parse(shortlistedContractors)
+          : [];
+        parsedRemovedIds  = removedDocumentIds
+          ? JSON.parse(removedDocumentIds)
+          : [];
       } catch {
-        return res.status(400).json({ message: "Invalid JSON in one of the array fields" });
+        return res
+          .status(400)
+          .json({ message: "Invalid JSON in one of the array fields" });
       }
 
       // ── Preserve existing tokens; generate for newly added contractors ──
@@ -204,19 +325,29 @@ router.put(
         };
       });
 
-      const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
-      const buildDocuments = (fieldFiles: Express.Multer.File[] | undefined, section: string) =>
-        (fieldFiles || []).map((f) => ({
-          fileName: f.originalname, fileType: f.mimetype,
-          fileSize: f.size, fileUrl: "", section, uploadedAt: new Date(),
-        }));
+      // ── Delete removed docs from R2 ─────────────────────────
+      const docsToRemove = ((tender as any).documents || []).filter(
+        (d: any) => parsedRemovedIds.includes(String(d._id)),
+      );
+      await deleteDocumentsFromR2(docsToRemove);
+      // ────────────────────────────────────────────────────────
 
-      const newDocs = [
-        ...buildDocuments(files?.["scope_files"],   "scope"),
-        ...buildDocuments(files?.["spec_files"],     "specifications"),
-        ...buildDocuments(files?.["general_files"],  "general"),
-      ];
+      // ── Upload new files to R2 ──────────────────────────────
+      const files =
+        req.files as
+          | { [fieldname: string]: Express.Multer.File[] }
+          | undefined;
+      const folder = `tenders/${tender.projectId}`;
 
+      const [scopeDocs, specDocs, generalDocs] = await Promise.all([
+        uploadDocuments(files?.["scope_files"],   "scope",          folder),
+        uploadDocuments(files?.["spec_files"],     "specifications", folder),
+        uploadDocuments(files?.["general_files"],  "general",        folder),
+      ]);
+      const newDocs = [...scopeDocs, ...specDocs, ...generalDocs];
+      // ────────────────────────────────────────────────────────
+
+      // Keep existing docs that were not removed
       const existingDocs = ((tender as any).documents || []).filter(
         (d: any) => !parsedRemovedIds.includes(String(d._id)),
       );
@@ -225,13 +356,16 @@ router.put(
         tenderId,
         {
           $set: {
-            title, description, category,
-            budgetedAmount: parsedBudget,
-            submissionDeadline: submissionDeadline || undefined,
-            scopeOfWorks, specifications,
+            title,
+            description,
+            category,
+            budgetedAmount:         parsedBudget,
+            submissionDeadline:     submissionDeadline || undefined,
+            scopeOfWorks,
+            specifications,
             complianceRequirements: parsedCompliance,
             shortlistedContractors: parsedContractors,
-            documents: [...existingDocs, ...newDocs],
+            documents:              [...existingDocs, ...newDocs],
           },
         },
         { new: true, runValidators: true },
@@ -239,7 +373,9 @@ router.put(
 
       // ── EMAIL: notify all shortlisted contractors if tender is already Issued ──
       if (tender.status === "Issued" && parsedContractors.length > 0) {
-        const project = await Project.findById(tender.projectId).select("projectName");
+        const project = await Project.findById(tender.projectId).select(
+          "projectName",
+        );
         const projectName = (project as any)?.projectName || "Your Project";
 
         await Promise.allSettled(
@@ -253,16 +389,19 @@ router.put(
               changeDescription: changeDescription || "Tender details have been updated.",
               bidSubmissionUrl:  `${APP_URL}/contractor/bid/${c.bidToken}`,
             }).catch((err) =>
-              console.error(`[SES] Failed to notify ${c.email}:`, err?.message),
+              console.error(
+                `[Email] Failed to notify ${c.email}:`,
+                err?.message,
+              ),
             ),
           ),
         );
       }
 
       res.json({ message: "Tender updated successfully", tender: updatedTender });
-    } catch (error) {
-      console.error("Update tender error:", error);
-      res.status(500).json({ message: "Failed to update tender" });
+    } catch (error: any) {
+      console.error("Update tender error:", error?.message || error);
+      res.status(500).json({ message: "Failed to update tender", detail: error?.message });
     }
   },
 );
@@ -275,29 +414,47 @@ router.post(
   async (req: express.Request, res: express.Response) => {
     try {
       const { tenderId } = req.params;
+
+      if (!isValidObjectId(tenderId))
+        return res.status(400).json({ message: "Invalid tender ID" });
+
       const hasAccess = await canAccessTender(req.user, tenderId);
       if (!hasAccess)
-        return res.status(403).json({ message: "Not authorized to access this tender" });
+        return res
+          .status(403)
+          .json({ message: "Not authorized to access this tender" });
 
       const tender = await Tender.findById(tenderId);
-      if (!tender) return res.status(404).json({ message: "Tender not found" });
+      if (!tender)
+        return res.status(404).json({ message: "Tender not found" });
       if (tender.status !== "Draft")
-        return res.status(400).json({ message: "Only draft tenders can be issued" });
-      if (!tender.shortlistedContractors || tender.shortlistedContractors.length === 0)
-        return res.status(400).json({ message: "Please shortlist contractors before issuing tender" });
+        return res
+          .status(400)
+          .json({ message: "Only draft tenders can be issued" });
+      if (
+        !tender.shortlistedContractors ||
+        tender.shortlistedContractors.length === 0
+      )
+        return res.status(400).json({
+          message: "Please shortlist contractors before issuing tender",
+        });
 
       // ── Generate a unique bid token for each contractor ──
-      tender.status = "Issued";
+      tender.status    = "Issued";
       tender.issueDate = new Date();
-      tender.shortlistedContractors = tender.shortlistedContractors.map((c: any) => ({
-        ...c,
-        invitedAt:   new Date(),
-        bidToken:    c.bidToken    || crypto.randomBytes(32).toString("hex"),
-        tokenExpiry: c.tokenExpiry || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-      }));
+      tender.shortlistedContractors = tender.shortlistedContractors.map(
+        (c: any) => ({
+          ...c,
+          invitedAt:   new Date(),
+          bidToken:    c.bidToken    || crypto.randomBytes(32).toString("hex"),
+          tokenExpiry: c.tokenExpiry || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        }),
+      );
       await tender.save();
 
-      const project = await Project.findById(tender.projectId).select("projectName");
+      const project = await Project.findById(tender.projectId).select(
+        "projectName",
+      );
       const projectName = (project as any)?.projectName || "Your Project";
 
       const emailResults = await Promise.allSettled(
@@ -324,7 +481,7 @@ router.post(
       emailResults.forEach((result, i) => {
         if (result.status === "rejected") {
           console.error(
-            `[SES] Invitation failed for ${tender.shortlistedContractors[i]?.email}:`,
+            `[Email] Invitation failed for ${tender.shortlistedContractors[i]?.email}:`,
             (result as PromiseRejectedResult).reason?.message,
           );
         }
@@ -334,9 +491,9 @@ router.post(
         message: `Tender issued successfully. Invitations sent: ${sent}${failed > 0 ? `, failed: ${failed} (check server logs)` : ""}.`,
         tender,
       });
-    } catch (error) {
-      console.error("Issue tender error:", error);
-      res.status(500).json({ message: "Failed to issue tender" });
+    } catch (error: any) {
+      console.error("Issue tender error:", error?.message || error);
+      res.status(500).json({ message: "Failed to issue tender", detail: error?.message });
     }
   },
 );
@@ -349,23 +506,36 @@ router.delete(
   async (req: express.Request, res: express.Response) => {
     try {
       const { tenderId } = req.params;
+
+      if (!isValidObjectId(tenderId))
+        return res.status(400).json({ message: "Invalid tender ID" });
+
       const hasAccess = await canAccessTender(req.user, tenderId);
       if (!hasAccess)
-        return res.status(403).json({ message: "Not authorized to access this tender" });
+        return res
+          .status(403)
+          .json({ message: "Not authorized to access this tender" });
 
       const tender = await Tender.findById(tenderId);
-      if (!tender) return res.status(404).json({ message: "Tender not found" });
+      if (!tender)
+        return res.status(404).json({ message: "Tender not found" });
       if (tender.status !== "Draft")
-        return res.status(400).json({ message: "Only draft tenders can be deleted" });
+        return res
+          .status(400)
+          .json({ message: "Only draft tenders can be deleted" });
+
+      // ── Delete all tender documents from R2 ─────────────────
+      await deleteDocumentsFromR2((tender as any).documents || []);
+      // ────────────────────────────────────────────────────────
 
       await TenderBid.deleteMany({ tenderId });
       await TenderRFI.deleteMany({ tenderId });
       await Tender.findByIdAndDelete(tenderId);
 
       res.json({ message: "Tender deleted successfully" });
-    } catch (error) {
-      console.error("Delete tender error:", error);
-      res.status(500).json({ message: "Failed to delete tender" });
+    } catch (error: any) {
+      console.error("Delete tender error:", error?.message || error);
+      res.status(500).json({ message: "Failed to delete tender", detail: error?.message });
     }
   },
 );
@@ -379,17 +549,23 @@ router.get(
   async (req: express.Request, res: express.Response) => {
     try {
       const { tenderId } = req.params;
+
+      if (!isValidObjectId(tenderId))
+        return res.status(400).json({ message: "Invalid tender ID" });
+
       const hasAccess = await canAccessTender(req.user, tenderId);
       if (!hasAccess)
-        return res.status(403).json({ message: "Not authorized to access this tender" });
+        return res
+          .status(403)
+          .json({ message: "Not authorized to access this tender" });
 
       const bids = await TenderBid.find({ tenderId })
         .populate("reviewedBy", "name email")
         .sort({ bidAmount: 1 });
       res.json(bids);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Get bids error:", error);
-      res.status(500).json({ message: "Failed to fetch bids" });
+      res.status(500).json({ message: "Failed to fetch bids", detail: error?.message });
     }
   },
 );
@@ -403,24 +579,24 @@ router.get(
     try {
       const { tenderId, bidId } = req.params;
 
-      // Validate ObjectId format before hitting MongoDB
-      if (!isValidObjectId(tenderId) || !isValidObjectId(bidId)) {
-        return res.status(400).json({ message: "Invalid tender or bid ID format" });
-      }
+      if (!isValidObjectId(tenderId) || !isValidObjectId(bidId))
+        return res
+          .status(400)
+          .json({ message: "Invalid tender or bid ID format" });
 
       const hasAccess = await canAccessTender(req.user, tenderId);
       if (!hasAccess)
-        return res.status(403).json({ message: "Not authorized to access this tender" });
+        return res
+          .status(403)
+          .json({ message: "Not authorized to access this tender" });
 
-      // Use findById + lean() — avoids populate crash if reviewedBy not in schema
       const bid = await TenderBid.findById(bidId).lean();
-
       if (!bid) return res.status(404).json({ message: "Bid not found" });
 
-      // Verify bid actually belongs to this tender
-      if (String(bid.tenderId) !== tenderId) {
-        return res.status(403).json({ message: "Bid does not belong to this tender" });
-      }
+      if (String(bid.tenderId) !== tenderId)
+        return res
+          .status(403)
+          .json({ message: "Bid does not belong to this tender" });
 
       res.json(bid);
     } catch (error: any) {
@@ -437,40 +613,66 @@ router.post(
   async (req: express.Request, res: express.Response) => {
     try {
       const { tenderId } = req.params;
+
+      if (!isValidObjectId(tenderId))
+        return res.status(400).json({ message: "Invalid tender ID" });
+
       const hasAccess = await canAccessTender(req.user, tenderId);
       if (!hasAccess)
-        return res.status(403).json({ message: "Not authorized to access this tender" });
+        return res
+          .status(403)
+          .json({ message: "Not authorized to access this tender" });
 
       const {
-        contractorId, contractorName, contractorEmail, bidAmount,
-        breakdownItems, assumptions, exclusions,
-        proposedStartDate, proposedCompletionDate, proposedDuration,
+        contractorId,
+        contractorName,
+        contractorEmail,
+        bidAmount,
+        breakdownItems,
+        assumptions,
+        exclusions,
+        proposedStartDate,
+        proposedCompletionDate,
+        proposedDuration,
       } = req.body;
 
       if (!bidAmount || !contractorId)
-        return res.status(400).json({ message: "Bid amount and contractor ID are required" });
+        return res
+          .status(400)
+          .json({ message: "Bid amount and contractor ID are required" });
 
       let bid = await TenderBid.findOne({ tenderId, contractorId });
       if (bid) {
         Object.assign(bid, {
-          bidAmount, breakdownItems: breakdownItems || [],
-          assumptions, exclusions,
-          proposedStartDate, proposedCompletionDate, proposedDuration,
+          bidAmount,
+          breakdownItems:        breakdownItems || [],
+          assumptions,
+          exclusions,
+          proposedStartDate,
+          proposedCompletionDate,
+          proposedDuration,
         });
         await bid.save();
       } else {
         bid = await TenderBid.create({
-          tenderId, contractorId, contractorName, contractorEmail,
-          bidAmount, breakdownItems: breakdownItems || [],
-          assumptions, exclusions,
-          proposedStartDate, proposedCompletionDate, proposedDuration,
+          tenderId,
+          contractorId,
+          contractorName,
+          contractorEmail,
+          bidAmount,
+          breakdownItems: breakdownItems || [],
+          assumptions,
+          exclusions,
+          proposedStartDate,
+          proposedCompletionDate,
+          proposedDuration,
         });
       }
 
       res.json({ message: "Bid saved successfully", bid });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Save bid error:", error);
-      res.status(500).json({ message: "Failed to save bid" });
+      res.status(500).json({ message: "Failed to save bid", detail: error?.message });
     }
   },
 );
@@ -482,16 +684,24 @@ router.post(
   async (req: express.Request, res: express.Response) => {
     try {
       const { tenderId, bidId } = req.params;
+
+      if (!isValidObjectId(tenderId) || !isValidObjectId(bidId))
+        return res
+          .status(400)
+          .json({ message: "Invalid tender or bid ID format" });
+
       const hasAccess = await canAccessTender(req.user, tenderId);
       if (!hasAccess)
-        return res.status(403).json({ message: "Not authorized to access this tender" });
+        return res
+          .status(403)
+          .json({ message: "Not authorized to access this tender" });
 
       const bid = await TenderBid.findById(bidId);
       if (!bid) return res.status(404).json({ message: "Bid not found" });
       if (bid.status === "Submitted")
         return res.status(400).json({ message: "Bid already submitted" });
 
-      bid.status = "Submitted";
+      bid.status      = "Submitted";
       bid.submittedAt = new Date();
       await bid.save();
 
@@ -504,10 +714,16 @@ router.post(
       // ── EMAIL: notify admin that a bid was submitted ──
       if (tender) {
         try {
-          const contractor = await Contractor.findById(bid.contractorId).select("companyName");
-          const project    = await Project.findById(tender.projectId).select("userId");
-          const User       = require("../models/User").default;
-          const admin      = await User.findById((project as any)?.userId).select("email");
+          const contractor = await Contractor.findById(
+            bid.contractorId,
+          ).select("companyName");
+          const project = await Project.findById(tender.projectId).select(
+            "userId",
+          );
+          const User  = require("../models/User").default;
+          const admin = await User.findById(
+            (project as any)?.userId,
+          ).select("email");
 
           if (admin?.email) {
             await sendBidReceivedNotification({
@@ -520,7 +736,12 @@ router.post(
               contractorEmail:   bid.contractorEmail || "",
               submittedAt:       bid.submittedAt?.toISOString() ?? new Date().toISOString(),
               reviewUrl:         `${APP_URL}/admin/projects/${tender.projectId}/tender/${tenderId}`,
-            }).catch((err) => console.error("[SES] Bid received notification failed:", err?.message));
+            }).catch((err) =>
+              console.error(
+                "[Email] Bid received notification failed:",
+                err?.message,
+              ),
+            );
           }
         } catch {
           // User model unavailable — skip silently
@@ -528,9 +749,9 @@ router.post(
       }
 
       res.json({ message: "Bid submitted successfully", bid });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Submit bid error:", error);
-      res.status(500).json({ message: "Failed to submit bid" });
+      res.status(500).json({ message: "Failed to submit bid", detail: error?.message });
     }
   },
 );
@@ -543,25 +764,33 @@ router.put(
   async (req: express.Request, res: express.Response) => {
     try {
       const { tenderId, bidId } = req.params;
+
+      if (!isValidObjectId(tenderId) || !isValidObjectId(bidId))
+        return res
+          .status(400)
+          .json({ message: "Invalid tender or bid ID format" });
+
       const hasAccess = await canAccessTender(req.user, tenderId);
       if (!hasAccess)
-        return res.status(403).json({ message: "Not authorized to access this tender" });
+        return res
+          .status(403)
+          .json({ message: "Not authorized to access this tender" });
 
       const { evaluationScore, evaluationNotes, status } = req.body;
       const bid = await TenderBid.findById(bidId);
       if (!bid) return res.status(404).json({ message: "Bid not found" });
 
-      bid.evaluationScore = evaluationScore;
-      bid.evaluationNotes = evaluationNotes;
-      bid.status = status || "Under Review";
-      (bid as any).reviewedAt = new Date();
-      (bid as any).reviewedBy = req.user!.id;
+      bid.evaluationScore        = evaluationScore;
+      bid.evaluationNotes        = evaluationNotes;
+      bid.status                 = status || "Under Review";
+      (bid as any).reviewedAt   = new Date();
+      (bid as any).reviewedBy   = req.user!.id;
       await bid.save();
 
       res.json({ message: "Bid evaluated successfully", bid });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Evaluate bid error:", error);
-      res.status(500).json({ message: "Failed to evaluate bid" });
+      res.status(500).json({ message: "Failed to evaluate bid", detail: error?.message });
     }
   },
 );
@@ -574,18 +803,27 @@ router.post(
   async (req: express.Request, res: express.Response) => {
     try {
       const { tenderId } = req.params;
+
+      if (!isValidObjectId(tenderId))
+        return res.status(400).json({ message: "Invalid tender ID" });
+
       const hasAccess = await canAccessTender(req.user, tenderId);
       if (!hasAccess)
-        return res.status(403).json({ message: "Not authorized to access this tender" });
+        return res
+          .status(403)
+          .json({ message: "Not authorized to access this tender" });
 
       const { bidId, awardedReason } = req.body;
-      if (!bidId) return res.status(400).json({ message: "Bid ID is required" });
+      if (!bidId)
+        return res.status(400).json({ message: "Bid ID is required" });
 
       const tender = await Tender.findById(tenderId);
-      if (!tender) return res.status(404).json({ message: "Tender not found" });
+      if (!tender)
+        return res.status(404).json({ message: "Tender not found" });
 
       const winningBid = await TenderBid.findById(bidId);
-      if (!winningBid) return res.status(404).json({ message: "Bid not found" });
+      if (!winningBid)
+        return res.status(404).json({ message: "Bid not found" });
 
       tender.status              = "Awarded";
       tender.awardedContractorId = winningBid.contractorId;
@@ -597,8 +835,14 @@ router.post(
       winningBid.status = "Accepted";
       await winningBid.save();
 
-      const losingBids = await TenderBid.find({ tenderId, _id: { $ne: bidId } });
-      await TenderBid.updateMany({ tenderId, _id: { $ne: bidId } }, { status: "Rejected" });
+      const losingBids = await TenderBid.find({
+        tenderId,
+        _id: { $ne: bidId },
+      });
+      await TenderBid.updateMany(
+        { tenderId, _id: { $ne: bidId } },
+        { status: "Rejected" },
+      );
 
       const project     = await Project.findById(tender.projectId).select("projectName");
       const projectName = (project as any)?.projectName || "Your Project";
@@ -613,7 +857,9 @@ router.post(
           projectName,
           awardedAmount:   winningBid.bidAmount,
           awardedReason,
-        }).catch((err) => console.error("[SES] Award email failed:", err?.message));
+        }).catch((err) =>
+          console.error("[Email] Award email failed:", err?.message),
+        );
       }
 
       // ── EMAIL: rejected contractors ──
@@ -628,15 +874,18 @@ router.post(
               tenderTitle:     tender.title,
               projectName,
             }).catch((err) =>
-              console.error(`[SES] Rejection email failed for ${b.contractorEmail}:`, err?.message),
+              console.error(
+                `[Email] Rejection email failed for ${b.contractorEmail}:`,
+                err?.message,
+              ),
             ),
           ),
       );
 
       res.json({ message: "Tender awarded successfully", tender });
-    } catch (error) {
-      console.error("Award tender error:", error);
-      res.status(500).json({ message: "Failed to award tender" });
+    } catch (error: any) {
+      console.error("Award tender error:", error?.message || error);
+      res.status(500).json({ message: "Failed to award tender", detail: error?.message });
     }
   },
 );
@@ -649,17 +898,23 @@ router.get(
   async (req: express.Request, res: express.Response) => {
     try {
       const { tenderId } = req.params;
+
+      if (!isValidObjectId(tenderId))
+        return res.status(400).json({ message: "Invalid tender ID" });
+
       const hasAccess = await canAccessTender(req.user, tenderId);
       if (!hasAccess)
-        return res.status(403).json({ message: "Not authorized to access this tender" });
+        return res
+          .status(403)
+          .json({ message: "Not authorized to access this tender" });
 
       const rfis = await TenderRFI.find({ tenderId })
         .populate("answeredBy", "name email")
         .sort({ askedAt: -1 });
       res.json(rfis);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Get RFIs error:", error);
-      res.status(500).json({ message: "Failed to fetch RFIs" });
+      res.status(500).json({ message: "Failed to fetch RFIs", detail: error?.message });
     }
   },
 );
@@ -670,14 +925,26 @@ router.post(
   async (req: express.Request, res: express.Response) => {
     try {
       const { tenderId } = req.params;
+
+      if (!isValidObjectId(tenderId))
+        return res.status(400).json({ message: "Invalid tender ID" });
+
       const hasAccess = await canAccessTender(req.user, tenderId);
       if (!hasAccess)
-        return res.status(403).json({ message: "Not authorized to access this tender" });
+        return res
+          .status(403)
+          .json({ message: "Not authorized to access this tender" });
 
       const { contractorId, contractorName, question } = req.body;
-      if (!question) return res.status(400).json({ message: "Question is required" });
+      if (!question)
+        return res.status(400).json({ message: "Question is required" });
 
-      const rfi = await TenderRFI.create({ tenderId, contractorId, contractorName, question });
+      const rfi = await TenderRFI.create({
+        tenderId,
+        contractorId,
+        contractorName,
+        question,
+      });
 
       const tender = await Tender.findById(tenderId);
       if (tender && tender.status === "Issued") {
@@ -686,9 +953,9 @@ router.post(
       }
 
       res.status(201).json({ message: "RFI created successfully", rfi });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Create RFI error:", error);
-      res.status(500).json({ message: "Failed to create RFI" });
+      res.status(500).json({ message: "Failed to create RFI", detail: error?.message });
     }
   },
 );
@@ -701,15 +968,25 @@ router.put(
   async (req: express.Request, res: express.Response) => {
     try {
       const { rfiId } = req.params;
+
+      if (!isValidObjectId(rfiId))
+        return res.status(400).json({ message: "Invalid RFI ID" });
+
       const { response } = req.body;
-      if (!response) return res.status(400).json({ message: "Response is required" });
+      if (!response)
+        return res.status(400).json({ message: "Response is required" });
 
       const rfi = await TenderRFI.findById(rfiId);
       if (!rfi) return res.status(404).json({ message: "RFI not found" });
 
-      const hasAccess = await canAccessTender(req.user, String((rfi as any).tenderId));
+      const hasAccess = await canAccessTender(
+        req.user,
+        String((rfi as any).tenderId),
+      );
       if (!hasAccess)
-        return res.status(403).json({ message: "Not authorized to access this tender" });
+        return res
+          .status(403)
+          .json({ message: "Not authorized to access this tender" });
 
       rfi.response   = response;
       rfi.status     = "Answered";
@@ -719,7 +996,9 @@ router.put(
 
       // ── EMAIL: notify contractor their RFI has been answered ──
       if ((rfi as any).contractorEmail) {
-        const tender = await Tender.findById((rfi as any).tenderId).select("title tenderNumber");
+        const tender = await Tender.findById((rfi as any).tenderId).select(
+          "title tenderNumber",
+        );
         await sendRFIAnsweredNotification({
           contractorName:  (rfi as any).contractorName || "Contractor",
           contractorEmail: (rfi as any).contractorEmail,
@@ -727,13 +1006,15 @@ router.put(
           tenderTitle:     (tender as any)?.title || "",
           question:        (rfi as any).question,
           answer:          response,
-        }).catch((err) => console.error("[SES] RFI answer email failed:", err?.message));
+        }).catch((err) =>
+          console.error("[Email] RFI answer email failed:", err?.message),
+        );
       }
 
       res.json({ message: "RFI answered successfully", rfi });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Answer RFI error:", error);
-      res.status(500).json({ message: "Failed to answer RFI" });
+      res.status(500).json({ message: "Failed to answer RFI", detail: error?.message });
     }
   },
 );
@@ -747,13 +1028,13 @@ router.get(
   async (req: express.Request, res: express.Response) => {
     try {
       const contractors = await Contractor.find({
-        status: { $ne: "Blacklisted" },
+        status:    { $ne: "Blacklisted" },
         createdBy: req.user!.id,
       }).sort({ name: 1 });
       res.json(contractors);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Get contractors error:", error);
-      res.status(500).json({ message: "Failed to fetch contractors" });
+      res.status(500).json({ message: "Failed to fetch contractors", detail: error?.message });
     }
   },
 );
@@ -765,26 +1046,47 @@ router.post(
   async (req: express.Request, res: express.Response) => {
     try {
       const {
-        name, email, phone, companyName, companyAddress,
-        registrationNumber, categories, regions,
+        name,
+        email,
+        phone,
+        companyName,
+        companyAddress,
+        registrationNumber,
+        categories,
+        regions,
       } = req.body;
 
       if (!name || !email || !companyName)
-        return res.status(400).json({ message: "Name, email, and company name are required" });
+        return res.status(400).json({
+          message: "Name, email, and company name are required",
+        });
 
-      const existing = await Contractor.findOne({ email, createdBy: req.user!.id });
-      if (existing)
-        return res.status(400).json({ message: "Contractor with this email already exists" });
-
-      const contractor = await Contractor.create({
-        name, email, phone, companyName, companyAddress, registrationNumber,
-        categories: categories || [], regions: regions || [],
+      const existing = await Contractor.findOne({
+        email,
         createdBy: req.user!.id,
       });
-      res.status(201).json({ message: "Contractor created successfully", contractor });
-    } catch (error) {
+      if (existing)
+        return res.status(400).json({
+          message: "Contractor with this email already exists",
+        });
+
+      const contractor = await Contractor.create({
+        name,
+        email,
+        phone,
+        companyName,
+        companyAddress,
+        registrationNumber,
+        categories: categories || [],
+        regions:    regions    || [],
+        createdBy:  req.user!.id,
+      });
+      res
+        .status(201)
+        .json({ message: "Contractor created successfully", contractor });
+    } catch (error: any) {
       console.error("Create contractor error:", error);
-      res.status(500).json({ message: "Failed to create contractor" });
+      res.status(500).json({ message: "Failed to create contractor", detail: error?.message });
     }
   },
 );
@@ -796,16 +1098,21 @@ router.put(
   async (req: express.Request, res: express.Response) => {
     try {
       const { contractorId } = req.params;
+
+      if (!isValidObjectId(contractorId))
+        return res.status(400).json({ message: "Invalid contractor ID" });
+
       const contractor = await Contractor.findOneAndUpdate(
         { _id: contractorId, createdBy: req.user!.id },
         { $set: req.body },
         { new: true, runValidators: true },
       );
-      if (!contractor) return res.status(404).json({ message: "Contractor not found" });
+      if (!contractor)
+        return res.status(404).json({ message: "Contractor not found" });
       res.json({ message: "Contractor updated successfully", contractor });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Update contractor error:", error);
-      res.status(500).json({ message: "Failed to update contractor" });
+      res.status(500).json({ message: "Failed to update contractor", detail: error?.message });
     }
   },
 );
@@ -818,21 +1125,30 @@ router.post(
   async (req: express.Request, res: express.Response) => {
     try {
       const { tenderId } = req.params;
+
+      if (!isValidObjectId(tenderId))
+        return res.status(400).json({ message: "Invalid tender ID" });
+
       const hasAccess = await canAccessTender(req.user, tenderId);
       if (!hasAccess)
-        return res.status(403).json({ message: "Not authorized to access this tender" });
+        return res
+          .status(403)
+          .json({ message: "Not authorized to access this tender" });
 
       const tender = await Tender.findById(tenderId);
-      if (!tender) return res.status(404).json({ message: "Tender not found" });
+      if (!tender)
+        return res.status(404).json({ message: "Tender not found" });
 
       const contractors = await Contractor.find({
-        status: "Active", isApproved: true,
-        categories: tender.category, createdBy: req.user!.id,
+        status:     "Active",
+        isApproved: true,
+        categories: tender.category,
+        createdBy:  req.user!.id,
       });
 
       const scoredContractors = contractors
         .map((contractor) => {
-          const perf = contractor.performance;
+          const perf  = contractor.performance;
           const score =
             (perf.averageRating    || 0) * 0.30 +
             (perf.onTimeDelivery   || 0) * 0.25 +
@@ -840,9 +1156,9 @@ router.post(
             (perf.qualityScore     || 0) * 0.20;
           return {
             contractorId: contractor._id.toString(),
-            name: contractor.name,
-            score: Math.round(score * 100) / 100,
-            reasoning: `Based on ${perf.projectsCompleted || 0} completed projects with ${perf.averageRating || 0}/5 rating. On-time delivery: ${perf.onTimeDelivery || 0}%, Budget compliance: ${perf.budgetCompliance || 0}%`,
+            name:         contractor.name,
+            score:        Math.round(score * 100) / 100,
+            reasoning:    `Based on ${perf.projectsCompleted || 0} completed projects with ${perf.averageRating || 0}/5 rating. On-time delivery: ${perf.onTimeDelivery || 0}%, Budget compliance: ${perf.budgetCompliance || 0}%`,
           };
         })
         .sort((a, b) => b.score - a.score)
@@ -866,9 +1182,9 @@ router.post(
       await tender.save();
 
       res.json(recommendations);
-    } catch (error) {
+    } catch (error: any) {
       console.error("AI recommendations error:", error);
-      res.status(500).json({ message: "Failed to generate recommendations" });
+      res.status(500).json({ message: "Failed to generate recommendations", detail: error?.message });
     }
   },
 );
@@ -884,20 +1200,30 @@ router.get(
   async (req: express.Request, res: express.Response) => {
     try {
       const { tenderId } = req.params;
+
+      if (!isValidObjectId(tenderId))
+        return res.status(400).json({ message: "Invalid tender ID" });
+
       const hasAccess = await canAccessTender(req.user, tenderId);
       if (!hasAccess)
-        return res.status(403).json({ message: "Not authorized to access this tender" });
+        return res
+          .status(403)
+          .json({ message: "Not authorized to access this tender" });
 
-      const tender = await Tender.findById(tenderId).populate("createdBy", "name email");
-      if (!tender) return res.status(404).json({ message: "Tender not found" });
+      const tender = await Tender.findById(tenderId).populate(
+        "createdBy",
+        "name email",
+      );
+      if (!tender)
+        return res.status(404).json({ message: "Tender not found" });
 
       const bids = await TenderBid.find({ tenderId }).sort({ bidAmount: 1 });
       const rfis = await TenderRFI.find({ tenderId }).sort({ askedAt: -1 });
 
       res.json({ ...tender.toObject(), bids, rfis });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Get tender error:", error);
-      res.status(500).json({ message: "Failed to fetch tender" });
+      res.status(500).json({ message: "Failed to fetch tender", detail: error?.message });
     }
   },
 );

@@ -5,16 +5,19 @@ import mongoose, { Schema, Document } from "mongoose";
 const AttachmentSchema = new Schema(
   {
     fileName: { type: String, required: true },
-    fileUrl: { type: String, required: true },
+    fileUrl:  { type: String, required: true },
     fileType: { type: String, required: true },
     fileSize: { type: Number },
-    uploadedBy: { type: Schema.Types.ObjectId, ref: "User" },
-    uploadedAt: { type: Date, default: Date.now },
+    uploadedBy:  { type: Schema.Types.ObjectId, ref: "User" },
+    uploadedAt:  { type: Date, default: Date.now },
     section: {
       type: String,
       enum: ["scope", "specifications", "general", "compliance"],
       default: "general",
     },
+    // Stores the R2 object key — used by deleteFromR2() when removing a doc.
+    // Named cloudinaryPublicId to stay consistent with Document model convention.
+    cloudinaryPublicId: { type: String },
   },
   { _id: true },
 );
@@ -26,7 +29,7 @@ const ShortlistedContractorSchema = new Schema(
       ref: "Contractor",
       required: true,
     },
-    name: { type: String, required: true },
+    name:  { type: String, required: true },
     email: { type: String, required: true },
     phone: { type: String },
     status: {
@@ -39,7 +42,7 @@ const ShortlistedContractorSchema = new Schema(
     // Each contractor gets a unique token so the bid URL is:
     //   /contractor/bid/:bidToken
     // This matches app/contractor/bid/[token]/page.tsx
-    bidToken: { type: String, index: true },
+    bidToken:    { type: String, index: true },
     tokenExpiry: { type: Date },
     lastNotifiedAt: { type: Date },
   },
@@ -56,8 +59,8 @@ const TenderSchema = new Schema(
       required: true,
     },
     tenderNumber: { type: String, unique: true },
-    title: { type: String, required: true },
-    description: { type: String },
+    title:        { type: String, required: true },
+    description:  { type: String },
     category: {
       type: String,
       enum: ["Construction", "Design", "Joinery", "MEP", "Fixtures", "Other"],
@@ -77,20 +80,20 @@ const TenderSchema = new Schema(
     },
 
     // Financial
-    budgetedAmount: { type: Number, required: true },
-    awardedAmount: { type: Number },
+    budgetedAmount:      { type: Number, required: true },
+    awardedAmount:       { type: Number },
     awardedContractorId: { type: Schema.Types.ObjectId, ref: "Contractor" },
-    awardedBidId: { type: Schema.Types.ObjectId, ref: "Bid" },
-    awardedReason: { type: String },
-    awardDate: { type: Date },
+    awardedBidId:        { type: Schema.Types.ObjectId, ref: "Bid" },
+    awardedReason:       { type: String },
+    awardDate:           { type: Date },
 
     // Dates
-    issueDate: { type: Date },
+    issueDate:          { type: Date },
     submissionDeadline: { type: Date },
 
     // Content
-    scopeOfWorks: { type: String },
-    specifications: { type: String },
+    scopeOfWorks:           { type: String },
+    specifications:         { type: String },
     complianceRequirements: [{ type: String }],
 
     // File attachments organized by section
@@ -109,10 +112,10 @@ const TenderSchema = new Schema(
     lastModifiedAfterIssue: { type: Date },
     modificationHistory: [
       {
-        modifiedAt: { type: Date, default: Date.now },
-        modifiedBy: { type: Schema.Types.ObjectId, ref: "User" },
-        changeDescription: { type: String },
-        notificationSent: { type: Boolean, default: false },
+        modifiedAt:          { type: Date, default: Date.now },
+        modifiedBy:          { type: Schema.Types.ObjectId, ref: "User" },
+        changeDescription:   { type: String },
+        notificationSent:    { type: Boolean, default: false },
       },
     ],
   },
@@ -124,9 +127,9 @@ const TenderSchema = new Schema(
 TenderSchema.pre("save", async function () {
   const doc = this as any;
   if (doc.isNew && !doc.tenderNumber) {
-    const count = await mongoose.model("Tender").countDocuments();
+    const count  = await mongoose.model("Tender").countDocuments();
     const padded = String(count + 1).padStart(4, "0");
-    const rand = Math.random().toString(36).substring(2, 5).toUpperCase();
+    const rand   = Math.random().toString(36).substring(2, 5).toUpperCase();
     doc.tenderNumber = `TND-${padded}-${rand}`;
   }
 });
@@ -158,6 +161,7 @@ export interface ITender extends Document {
     uploadedBy?: mongoose.Types.ObjectId;
     uploadedAt: Date;
     section: string;
+    cloudinaryPublicId?: string; // R2 object key for deletion
   }>;
   shortlistedContractors: Array<{
     contractorId: mongoose.Types.ObjectId;
