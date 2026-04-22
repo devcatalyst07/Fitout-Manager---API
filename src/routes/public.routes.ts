@@ -3,7 +3,7 @@ import multer from "multer";
 import Tender from "../models/Tender";
 import TenderBid from "../models/TenderBid";
 import TenderRFI from "../models/TenderRFI";
-import Contractor from "../models/Contractor";
+import { uploadToR2 } from "../utils/r2Storage";
 import {
   sendEmail,
   buildBidConfirmationEmail,
@@ -12,7 +12,7 @@ import {
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
-// ─── Helper: resolve token → { tender, contractor } ──────────────────────────
+// ─── Helper: resolve token → { tender, entry, expired } ──────────────────────
 
 async function resolveToken(token: string) {
   const tender = await Tender.findOne({
@@ -21,80 +21,115 @@ async function resolveToken(token: string) {
   if (!tender) return null;
 
   const entry = tender.shortlistedContractors.find(
-    (c: any) => c.bidToken === token
+    (c: any) => c.bidToken === token,
   );
   if (!entry) return null;
 
-  // Token expiry check (optional – if tokenExpiry is set and in the past)
   if (entry.tokenExpiry && new Date(entry.tokenExpiry) < new Date()) {
     return { tender, entry, expired: true };
   }
-
   return { tender, entry, expired: false };
 }
 
-// ─── GET /api/public/bid/:token ──────────────────────────────────────────────
+// ─── Helper: upload bid files to R2 ──────────────────────────────────────────
 
-router.get("/bid/:token", async (req: express.Request, res: express.Response) => {
-  try {
-    const { token } = req.params;
-    const result = await resolveToken(token);
+async function uploadBidAttachments(
+  files: Express.Multer.File[],
+  tenderId: string,
+): Promise<any[]> {
+  if (!files || files.length === 0) return [];
 
-    if (!result) {
-      return res.status(404).json({
-        message:
-          "This invitation link is invalid or has expired. Please contact the project team.",
+  const folder = `bids/${tenderId}`;
+
+  const results = await Promise.allSettled(
+    files.map((f) => uploadToR2(f, folder)),
+  );
+
+  return results
+    .map((result, i) => {
+      if (result.status === "fulfilled") {
+        return {
+          fileName:           files[i].originalname,
+          fileType:           files[i].mimetype,
+          fileSize:           files[i].size,
+          fileUrl:            result.value.fileUrl,   // real R2 URL
+          cloudinaryPublicId: result.value.key,       // R2 key for future deletion
+          category:           "other" as const,
+          uploadedAt:         new Date(),
+        };
+      }
+      // Log failed uploads but don't crash the whole submission
+      console.error(
+        `[R2] Failed to upload bid file "${files[i].originalname}":`,
+        result.reason,
+      );
+      return null;
+    })
+    .filter(Boolean);
+}
+
+// ─── GET /api/public/bid/:token ───────────────────────────────────────────────
+
+router.get(
+  "/bid/:token",
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { token } = req.params;
+      const result = await resolveToken(token);
+
+      if (!result) {
+        return res.status(404).json({
+          message:
+            "This invitation link is invalid or has expired. Please contact the project team.",
+        });
+      }
+
+      const { tender, entry, expired } = result;
+
+      const contractor = {
+        contractorId: String(entry.contractorId),
+        name:         entry.name,
+        email:        entry.email,
+        phone:        entry.phone || "",
+      };
+
+      const isOverdue =
+        !!tender.submissionDeadline &&
+        new Date(tender.submissionDeadline) < new Date();
+
+      const existingBid = await TenderBid.findOne({
+        tenderId:     tender._id,
+        contractorId: entry.contractorId,
+      }).lean();
+
+      res.json({
+        tender: {
+          _id:                    tender._id,
+          tenderNumber:           (tender as any).tenderNumber,
+          title:                  tender.title,
+          description:            tender.description,
+          category:               tender.category,
+          status:                 tender.status,
+          budgetedAmount:         tender.budgetedAmount,
+          submissionDeadline:     tender.submissionDeadline,
+          scopeOfWorks:           tender.scopeOfWorks,
+          specifications:         tender.specifications,
+          complianceRequirements: tender.complianceRequirements,
+          documents:              tender.documents,
+        },
+        contractor,
+        existingBid: existingBid || null,
+        isOverdue,
+        tokenExpired: expired,
       });
+    } catch (error: any) {
+      console.error("[Public] GET bid error:", error);
+      res.status(500).json({ message: "Server error. Please try again later." });
     }
+  },
+);
 
-    const { tender, entry, expired } = result;
-
-    // Allow viewing even if expired (so contractor sees the deadline-passed state)
-    const contractor = {
-      contractorId: String(entry.contractorId),
-      name: entry.name,
-      email: entry.email,
-      phone: entry.phone || "",
-    };
-
-    // Check whether a submission deadline has passed
-    const isOverdue =
-      !!tender.submissionDeadline &&
-      new Date(tender.submissionDeadline) < new Date();
-
-    // Look up any existing bid from this contractor
-    const existingBid = await TenderBid.findOne({
-      tenderId: tender._id,
-      contractorId: entry.contractorId,
-    }).lean();
-
-    res.json({
-      tender: {
-        _id: tender._id,
-        tenderNumber: (tender as any).tenderNumber,
-        title: tender.title,
-        description: tender.description,
-        category: tender.category,
-        status: tender.status,
-        budgetedAmount: tender.budgetedAmount,
-        submissionDeadline: tender.submissionDeadline,
-        scopeOfWorks: tender.scopeOfWorks,
-        specifications: tender.specifications,
-        complianceRequirements: tender.complianceRequirements,
-        documents: tender.documents,
-      },
-      contractor,
-      existingBid: existingBid || null,
-      isOverdue,
-      tokenExpired: expired,
-    });
-  } catch (error: any) {
-    console.error("[Public] GET bid error:", error);
-    res.status(500).json({ message: "Server error. Please try again later." });
-  }
-});
-
-// ─── POST /api/public/bid/:token ─────────────────────────────────────────────
+// ─── POST /api/public/bid/:token ──────────────────────────────────────────────
 
 router.post(
   "/bid/:token",
@@ -146,35 +181,28 @@ router.post(
         parsedBreakdown = [];
       }
 
-      // Build attachment metadata (file URLs would normally point to an upload service)
+      // ── Upload bid files to R2 ────────────────────────────────
       const files = (req.files as Express.Multer.File[]) || [];
-      const attachments = files.map((f) => ({
-        fileName: f.originalname,
-        fileType: f.mimetype,
-        fileSize: f.size,
-        fileUrl: "", // In production: upload to S3/GCS and store the URL
-        category: "other" as const,
-        uploadedAt: new Date(),
-      }));
+      const attachments = await uploadBidAttachments(files, String(tender._id));
+      // ──────────────────────────────────────────────────────────
 
       // Upsert bid
       let bid = await TenderBid.findOne({
-        tenderId: tender._id,
+        tenderId:     tender._id,
         contractorId: entry.contractorId,
       });
 
       if (bid) {
-        // Update existing draft/submitted bid
-        bid.bidAmount = parsedBidAmount;
-        bid.breakdownItems = parsedBreakdown;
-        bid.assumptions = assumptions || "";
-        bid.exclusions = exclusions || "";
-        bid.comments = comments || "";
-        bid.proposedDuration = proposedDuration
-          ? parseInt(proposedDuration)
-          : undefined;
-        bid.status = "Submitted";
-        bid.submittedAt = new Date();
+        bid.bidAmount        = parsedBidAmount;
+        bid.breakdownItems   = parsedBreakdown;
+        bid.assumptions      = assumptions || "";
+        bid.exclusions       = exclusions  || "";
+        bid.comments         = comments    || "";
+        bid.proposedDuration = proposedDuration ? parseInt(proposedDuration) : undefined;
+        bid.status           = "Submitted";
+        bid.submittedAt      = new Date();
+
+        // Merge new attachments with any previously uploaded ones
         if (attachments.length > 0) {
           (bid as any).attachments = [
             ...((bid as any).attachments || []),
@@ -184,25 +212,23 @@ router.post(
         await bid.save();
       } else {
         bid = await TenderBid.create({
-          tenderId: tender._id,
-          contractorId: entry.contractorId,
-          contractorName: entry.name,
+          tenderId:        tender._id,
+          contractorId:    entry.contractorId,
+          contractorName:  entry.name,
           contractorEmail: entry.email,
-          bidAmount: parsedBidAmount,
-          breakdownItems: parsedBreakdown,
-          assumptions: assumptions || "",
-          exclusions: exclusions || "",
-          comments: comments || "",
-          proposedDuration: proposedDuration
-            ? parseInt(proposedDuration)
-            : undefined,
+          bidAmount:       parsedBidAmount,
+          breakdownItems:  parsedBreakdown,
+          assumptions:     assumptions || "",
+          exclusions:      exclusions  || "",
+          comments:        comments    || "",
+          proposedDuration: proposedDuration ? parseInt(proposedDuration) : undefined,
           attachments,
-          status: "Submitted",
-          submittedAt: new Date(),
+          status:          "Submitted",
+          submittedAt:     new Date(),
         });
       }
 
-      // Update tender status to Bid Evaluation if still Issued
+      // Update tender status to Bid Evaluation if still Issued/RFI
       if (tender.status === "Issued" || tender.status === "RFI") {
         tender.status = "Bid Evaluation";
         await tender.save();
@@ -210,7 +236,7 @@ router.post(
 
       // Update shortlisted contractor status to Bid Submitted
       const scIdx = tender.shortlistedContractors.findIndex(
-        (c: any) => c.bidToken === token
+        (c: any) => c.bidToken === token,
       );
       if (scIdx !== -1) {
         (tender.shortlistedContractors[scIdx] as any).status = "Bid Submitted";
@@ -221,25 +247,25 @@ router.post(
       if (entry.email) {
         const emailData = buildBidConfirmationEmail({
           contractorName: entry.name,
-          tenderNumber: (tender as any).tenderNumber,
-          tenderTitle: tender.title,
-          bidAmount: parsedBidAmount,
-          submittedAt: new Date().toISOString(),
+          tenderNumber:   (tender as any).tenderNumber,
+          tenderTitle:    tender.title,
+          bidAmount:      parsedBidAmount,
+          submittedAt:    new Date().toISOString(),
         });
         sendEmail({ to: entry.email, ...emailData }).catch((err) =>
-          console.error("[Public] Bid confirmation email failed:", err?.message)
+          console.error("[Public] Bid confirmation email failed:", err?.message),
         );
       }
 
       res.json({
         message: "Bid submitted successfully.",
-        bid: bid.toObject(),
+        bid:     bid.toObject(),
       });
     } catch (error: any) {
       console.error("[Public] POST bid error:", error);
-      res.status(500).json({ message: "Server error. Please try again." });
+      res.status(500).json({ message: "Server error. Please try again.", detail: error?.message });
     }
-  }
+  },
 );
 
 // ─── GET /api/public/bid/:token/rfis ─────────────────────────────────────────
@@ -253,9 +279,8 @@ router.get(
       if (!result) return res.status(404).json({ message: "Invalid link." });
 
       const { tender, entry } = result;
-
       const rfis = await TenderRFI.find({
-        tenderId: tender._id,
+        tenderId:     tender._id,
         contractorId: String(entry.contractorId),
       }).sort({ askedAt: -1 });
 
@@ -264,7 +289,7 @@ router.get(
       console.error("[Public] GET RFIs error:", error);
       res.status(500).json({ message: "Server error." });
     }
-  }
+  },
 );
 
 // ─── POST /api/public/bid/:token/rfi ─────────────────────────────────────────
@@ -285,15 +310,14 @@ router.post(
       }
 
       const rfi = await TenderRFI.create({
-        tenderId: tender._id,
-        contractorId: String(entry.contractorId),
+        tenderId:       tender._id,
+        contractorId:   String(entry.contractorId),
         contractorName: entry.name,
-        question: question.trim(),
-        status: "Pending",
-        askedAt: new Date(),
+        question:       question.trim(),
+        status:         "Pending",
+        askedAt:        new Date(),
       });
 
-      // Move tender to RFI status if currently Issued
       if (tender.status === "Issued") {
         tender.status = "RFI";
         await tender.save();
@@ -304,7 +328,7 @@ router.post(
       console.error("[Public] POST RFI error:", error);
       res.status(500).json({ message: "Server error." });
     }
-  }
+  },
 );
 
 export default router;

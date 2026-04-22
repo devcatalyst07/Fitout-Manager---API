@@ -2,10 +2,10 @@ import mongoose, { Schema, Document } from "mongoose";
 
 const BidAttachmentSchema = new Schema(
   {
-    fileName: { type: String, required: true },
-    fileUrl: { type: String, required: true },
-    fileType: { type: String, required: true },
-    fileSize: { type: Number },
+    fileName:  { type: String, required: true },
+    fileUrl:   { type: String, required: true },
+    fileType:  { type: String, required: true },
+    fileSize:  { type: Number },
     category: {
       type: String,
       enum: [
@@ -17,19 +17,21 @@ const BidAttachmentSchema = new Schema(
       ],
       default: "other",
     },
+    // Stores the R2 object key — same convention as Document model
+    cloudinaryPublicId: { type: String },
     uploadedAt: { type: Date, default: Date.now },
   },
-  { _id: true }
+  { _id: true },
 );
 
 const BreakdownItemSchema = new Schema(
   {
     description: { type: String, required: true },
-    quantity: { type: Number, default: 1 },
-    unitCost: { type: Number, default: 0 },
-    total: { type: Number, default: 0 },
+    quantity:    { type: Number, default: 1 },
+    unitCost:    { type: Number, default: 0 },
+    total:       { type: Number, default: 0 },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const BidSchema = new Schema(
@@ -44,24 +46,22 @@ const BidSchema = new Schema(
       ref: "Contractor",
       required: true,
     },
-    contractorName: { type: String, required: true },
+    contractorName:  { type: String, required: true },
     contractorEmail: { type: String, required: true },
 
     // Pricing
-    bidAmount: { type: Number, required: true },
+    bidAmount:      { type: Number, required: true },
     breakdownItems: [BreakdownItemSchema],
 
     // Details
-    assumptions: { type: String },
-    exclusions: { type: String },
-    proposedDuration: { type: Number }, // days
-    proposedStartDate: { type: Date },
+    assumptions:            { type: String },
+    exclusions:             { type: String },
+    proposedDuration:       { type: Number }, // days
+    proposedStartDate:      { type: Date },
     proposedCompletionDate: { type: Date },
+    comments:               { type: String },
 
-    // ★ NEW: Contractor comments on the bid
-    comments: { type: String },
-
-    // ★ NEW: File attachments from contractor
+    // File attachments from contractor
     attachments: [BidAttachmentSchema],
 
     // Status & evaluation
@@ -70,13 +70,13 @@ const BidSchema = new Schema(
       enum: ["Draft", "Submitted", "Under Review", "Accepted", "Rejected"],
       default: "Draft",
     },
-    submittedAt: { type: Date },
+    submittedAt:     { type: Date },
     evaluationScore: { type: Number, min: 0, max: 100 },
     evaluationNotes: { type: String },
-    evaluatedBy: { type: Schema.Types.ObjectId, ref: "User" },
-    evaluatedAt: { type: Date },
+    evaluatedBy:     { type: Schema.Types.ObjectId, ref: "User" },
+    evaluatedAt:     { type: Date },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 // Compound index: one bid per contractor per tender
@@ -107,6 +107,7 @@ export interface IBid extends Document {
     fileType: string;
     fileSize?: number;
     category: string;
+    cloudinaryPublicId?: string; // R2 object key
     uploadedAt: Date;
   }>;
   status: string;
