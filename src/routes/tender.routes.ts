@@ -142,6 +142,90 @@ const recalculateProjectSpent = async (projectId: any): Promise<void> => {
   }
 };
 
+// ==================== PENDING RFIs ROUTE ====================
+// ⚠️ MUST BE FIRST - Place this BEFORE all other routes to avoid shadowing
+
+router.get(
+  "/pending-rfis",
+  authMiddleware,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      console.log("[RFI] Fetching pending RFIs for user:", req.user?.id);
+
+      // Validate user exists
+      if (!req.user || !req.user.id) {
+        console.warn("[RFI] Unauthorized access attempt - no user");
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized: User not authenticated",
+          pendingRFIs: [],
+          count: 0,
+        });
+      }
+
+      // Get all projects for this user
+      const userProjects = await Project.find({
+        userId: req.user.id,
+      }).select("_id");
+
+      console.log(`[RFI] Found ${userProjects.length} projects for user ${req.user.id}`);
+
+      if (userProjects.length === 0) {
+        return res.json({
+          success: true,
+          pendingRFIs: [],
+          count: 0,
+        });
+      }
+
+      const projectIds = userProjects.map((p) => p._id);
+
+      // Get all tenders for these projects
+      const tenders = await Tender.find({
+        projectId: { $in: projectIds },
+      }).select("_id title tenderNumber projectId");
+
+      console.log(`[RFI] Found ${tenders.length} tenders for projects`);
+
+      if (tenders.length === 0) {
+        return res.json({
+          success: true,
+          pendingRFIs: [],
+          count: 0,
+        });
+      }
+
+      const tenderIds = tenders.map((t) => t._id);
+
+      // Get all pending RFIs for these tenders
+      const pendingRFIs = await TenderRFI.find({
+        tenderId: { $in: tenderIds },
+        status: "Pending",
+      })
+        .populate("tenderId", "title tenderNumber projectId")
+        .sort({ askedAt: -1 })
+        .lean();
+
+      console.log(`[RFI] Found ${pendingRFIs.length} pending RFIs`);
+
+      res.json({
+        success: true,
+        pendingRFIs: pendingRFIs || [],
+        count: pendingRFIs?.length || 0,
+      });
+    } catch (error: any) {
+      console.error("[RFI] Get pending RFIs error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to fetch pending RFIs",
+        detail: error?.message || "Unknown error",
+        pendingRFIs: [],
+        count: 0,
+      });
+    }
+  },
+);
+
 // ==================== TENDER ROUTES ====================
 
 // GET all tenders for a project

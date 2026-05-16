@@ -138,7 +138,10 @@ app.get("/", (_, res) => {
 app.use("/api", setCsrfToken);
 app.use("/api", verifyCsrf);
 
-// API Routes
+// ============================================================
+// API ROUTES - Order matters! More specific routes should come before generic ones
+// ============================================================
+
 app.use("/api/auth", authRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/admin", dashboardRoutes);
@@ -161,7 +164,12 @@ app.use("/api/tasks", activityLogRoutes);
 app.use("/api", uploadRoutes);
 app.use("/api", calendarRoutes);
 app.use("/api/profile", profileRoutes);
+
+// ========== TENDER ROUTES - IMPORTANT: Register BEFORE public routes ==========
+// The /api/pending-rfis endpoint is critical and must be accessible
 app.use("/api", tenderRoutes);
+// ============================================================
+
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/contractors", contractorRoutes);
 app.use("/api/public", publicRoutes);
