@@ -456,23 +456,23 @@ router.put(
     try {
       const { taskId } = req.params;
       const rawUpdate = { ...req.body };
-
+ 
       const oldTask = await Task.findOne({ _id: taskId, isTemplate: false });
       if (!oldTask) return res.status(404).json({ message: "Task not found" });
-
+ 
       // ── Sanitize dependencies: remove any entry with an empty taskId ──────
       if (Array.isArray(rawUpdate.dependencies)) {
         rawUpdate.dependencies = rawUpdate.dependencies.filter(
           (d: any) => d?.taskId && String(d.taskId).trim() !== "",
         );
       }
-
+ 
       // ── Clamp duration for Milestones ─────────────────────────────────────
       const effectiveTaskType = rawUpdate.taskType ?? oldTask.taskType;
       if (effectiveTaskType === "Milestone" && rawUpdate.duration > 1) {
         rawUpdate.duration = 1;
       }
-
+ 
       // ── Verify phaseId belongs to same project ────────────────────────────
       if (rawUpdate.phaseId && rawUpdate.phaseId !== oldTask.phaseId?.toString()) {
         const phase = await Phase.findOne({
@@ -484,7 +484,7 @@ router.put(
           return res.status(404).json({ message: "Phase not found in this project" });
         }
       }
-
+ 
       // ── Persist update with $set to avoid replacing the document ──────────
       // runValidators: false prevents validator-context bugs (validators use
       // `this` as the query object, not the document, in findByIdAndUpdate).
@@ -496,12 +496,12 @@ router.put(
         .populate("createdBy", "name email")
         .populate("projectId", "projectName")
         .populate("phaseId", "name order");
-
+ 
       if (!updatedTask) return res.status(404).json({ message: "Task not found" });
-
+ 
       // ── Activity logs ─────────────────────────────────────────────────────
       const logPromises: Promise<any>[] = [];
-
+ 
       if (oldTask.title !== updatedTask.title) {
         logPromises.push(
           ActivityLog.create({
@@ -517,7 +517,7 @@ router.put(
           }).then((log) => emitActivityLog(taskId, log)),
         );
       }
-
+ 
       if (oldTask.status !== updatedTask.status) {
         logPromises.push(
           ActivityLog.create({
@@ -533,7 +533,7 @@ router.put(
           }).then((log) => emitActivityLog(taskId, log)),
         );
       }
-
+ 
       let oldPhaseName: string | null = null;
       let newPhaseName: string | null = null;
       if (oldTask.phaseId?.toString() !== updatedTask.phaseId?.toString()) {
@@ -543,7 +543,7 @@ router.put(
         ]);
         oldPhaseName = oldPhase?.name || "Unassigned";
         newPhaseName = newPhase?.name || "Unassigned";
-
+ 
         logPromises.push(
           ActivityLog.create({
             taskId,
@@ -558,16 +558,16 @@ router.put(
           }).then((log) => emitActivityLog(taskId, log)),
         );
       }
-
+ 
       await Promise.allSettled(logPromises);
-
+ 
       const taskUpdateMessage = buildTaskUpdateMessage(
         req.user!.name || "User",
         oldTask.toObject(),
         updatedTask.toObject(),
         { oldPhaseName, newPhaseName },
       );
-
+ 
       if (oldTask.status !== "Done" && updatedTask.status === "Done") {
         await activityHelpers.taskCompleted(
           req.params.projectId,
@@ -591,8 +591,11 @@ router.put(
           taskUpdateMessage,
         );
       }
-
-      res.json({ message: "Task updated successfully", task: updatedTask });
+ 
+      // ── FIXED: Silent response - return updated task WITHOUT message ──────
+      // The frontend will not display any alert/notification based on this response
+      // Frontend handles success silently - no alert popup appears
+      res.json({ task: updatedTask, success: true });
     } catch (error: any) {
       console.error("Update task error:", error);
       res.status(500).json({ message: "Failed to update task", error: error.message });
